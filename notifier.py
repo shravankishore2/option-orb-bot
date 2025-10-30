@@ -1,65 +1,43 @@
-# notifier.py — Send trading signals via Telegram (fixed, robust)
+# notifier.py — Send trading signals via Telegram
+
 import requests
 from datetime import datetime
 import os
+import configparser
 
 
 def format_message(signals):
-    """Formats the trading message (Markdown)."""
-    # Defensive: support empty or None
+    """Formats the trading message clearly and safely."""
     if not signals:
         return "📊 *Opening Range Strategy (9:15–9:35)*\n\nNo trading signals generated for today."
 
-    # Normalize signal key names (some places used "direction" earlier)
-    normalized = []
-    for s in signals:
-        sig = dict(s)  # copy
-        if "direction" in sig and "signal" not in sig:
-            sig["signal"] = sig["direction"]
-        normalized.append(sig)
+    buy_signals = [s for s in signals if s.get("signal") == "BUY"]
+    sell_signals = [s for s in signals if s.get("signal") == "SELL"]
 
-    buy_signals = [s for s in normalized if s.get("signal") == "BUY"]
-    sell_signals = [s for s in normalized if s.get("signal") == "SELL"]
+    msg_lines = [
+        "📊 *Opening Range Strategy (9:15–9:35)*",
+        "",
+        f"📅 Date: {datetime.now().strftime('%d-%b-%Y')}",
+        f"🕒 Time: {datetime.now().strftime('%H:%M')}",
+        ""
+    ]
 
-    # Header
-    msg_lines = []
-    msg_lines.append("📊 *Opening Range Strategy (9:15–9:35)*")
-    msg_lines.append("")
-    msg_lines.append(f"📅 Date: {datetime.now().strftime('%d-%b-%Y')}")
-    msg_lines.append(f"🕒 Time: {datetime.now().strftime('%H:%M')}")
-    msg_lines.append("")
-
-    # BUY CALLS block
+    # BUY CALLS section
     if buy_signals:
         msg_lines.append("🟢 *BUY CALLS*")
         for s in buy_signals:
-            symbol = s.get("symbol", "UNKNOWN")
-            suggested = s.get("suggested_action")
-            if not suggested:
-                # default suggestion: nearest 50 strike call
-                try:
-                    underlying = float(s.get("underlying_price", s.get("close", 0)))
-                    strike = int(round(underlying / 50) * 50)
-                    suggested = f"BUY {symbol} CALL near {strike}"
-                except Exception:
-                    suggested = f"BUY {symbol} CALL"
-            msg_lines.append(f"• *{symbol}* — {suggested}")
+            symbol = s.get("symbol", "")
+            suggested = s.get("suggested_action", f"BUY {symbol} CALL")
+            msg_lines.append(f"• {suggested}")
         msg_lines.append("")
 
-    # BUY PUTS block
+    # BUY PUTS section
     if sell_signals:
         msg_lines.append("🔴 *BUY PUTS*")
         for s in sell_signals:
-            symbol = s.get("symbol", "UNKNOWN")
-            suggested = s.get("suggested_action")
-            if not suggested:
-                try:
-                    underlying = float(s.get("underlying_price", s.get("close", 0)))
-                    strike = int(round(underlying / 50) * 50)
-                    suggested = f"BUY {symbol} PUT near {strike}"
-                except Exception:
-                    suggested = f"BUY {symbol} PUT"
-            msg_lines.append(f"• *{symbol}* — {suggested}")
+            symbol = s.get("symbol", "")
+            suggested = s.get("suggested_action", f"BUY {symbol} PUT")
+            msg_lines.append(f"• {suggested}")
         msg_lines.append("")
 
     if not buy_signals and not sell_signals:
@@ -67,29 +45,20 @@ def format_message(signals):
         msg_lines.append("")
 
     msg_lines.append("— Automated by Python 📈")
-
-    # Join with two spaces to keep Markdown readable
     return "\n".join(msg_lines)
 
 
 def send_telegram_message(token, chat_id, text):
-    """Send a Telegram message. Returns True on success."""
-    if not token or not chat_id:
-        print("⚠️ Telegram token or chat_id missing.")
-        return False
-
+    """Send a Telegram message to a chat/group."""
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+
     try:
-        r = requests.post(url, data=payload, timeout=10)
-        if r.status_code == 200:
+        response = requests.post(url, data=payload, timeout=10)
+        if response.status_code == 200:
             return True
         else:
-            print(f"⚠️ Telegram API returned {r.status_code}: {r.text}")
+            print(f"⚠️ Telegram API error: {response.text}")
             return False
     except Exception as e:
         print(f"⚠️ Telegram send failed: {e}")
@@ -97,36 +66,36 @@ def send_telegram_message(token, chat_id, text):
 
 
 def format_and_send(chat_id, signals, token=None):
-    """
-    Format the signals and send via Telegram.
-    - chat_id: numeric chat id or group id (string or int)
-    - signals: list of dicts
-    - token: bot token
-    Returns True if message sent, False otherwise (and saves a local backup).
-    """
+    """Format message and send via Telegram."""
     message = format_message(signals)
     print("📨 Sending Telegram message...")
-    success = send_telegram_message(token, chat_id, message)
 
+    success = send_telegram_message(token, chat_id, message)
     if success:
         print("✅ Telegram message sent successfully.")
-        return True
-
-    # fallback: save message locally for debugging / manual sending
-    try:
+    else:
+        print("⚠️ Telegram message failed. Saving locally...")
         backup_path = os.path.join(os.getcwd(), "last_telegram_message.txt")
         with open(backup_path, "w", encoding="utf-8") as f:
             f.write(message)
-        print(f"Message saved to {backup_path}")
-    except Exception as e:
-        print(f"⚠️ Failed to save backup message: {e}")
+        print(f"💾 Message saved to {backup_path}")
 
-    return False
+    return success
 
 
 def load_config(path="config.ini"):
-    """Load Telegram token and chat ID from config.ini (DEFAULT section)."""
-    import configparser
+    """Load Telegram token and chat ID from config.ini."""
     cfg = configparser.ConfigParser()
     cfg.read(path)
-    return cfg["DEFAULT"] if "DEFAULT" in cfg else {}
+    if "DEFAULT" not in cfg:
+        raise ValueError("❌ config.ini missing [DEFAULT] section.")
+    return cfg["DEFAULT"]
+
+
+if __name__ == "__main__":
+    # Simple local test
+    test_signals = [
+        {"symbol": "RELIANCE", "signal": "BUY", "suggested_action": "BUY RELIANCE 2500 CALL"},
+        {"symbol": "TCS", "signal": "SELL", "suggested_action": "BUY TCS 3400 PUT"},
+    ]
+    print(format_message(test_signals))
