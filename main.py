@@ -1,6 +1,6 @@
 # main.py — Opening Range Breakout Strategy (optimized)
 # Fetches 9:15–9:30 OHLC once, then checks breakout every 5 minutes till 15:30 IST
-
+print("🧠 Running latest version of main.py...")
 import pandas as pd
 import time
 import datetime
