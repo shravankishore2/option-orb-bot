@@ -19,7 +19,7 @@ def format_message(signals):
     if buy_signals:
         msg += "🟢 *BUY CALLS*\n"
         for s in buy_signals:
-            msg += f"• {s['symbol']} — {s.get('suggested_action', f'BUY {s['symbol']} CALL')}\n"
+            s.get('suggested_action', f"BUY {s['symbol']} CALL")
         msg += "\n"
 
     if sell_signals:
