@@ -87,7 +87,7 @@ def main():
     while True:
         now = datetime.datetime.now(IST).time()
 
-        if datetime.time(9, 35) <= now <= datetime.time(15, 30):
+        if True:  # ⚡ Force test mode
             print(f"\n🕒 Checking breakouts at {datetime.datetime.now(IST).strftime('%H:%M:%S')} IST...")
             try:
                 signals = check_breakouts(opening_df)
