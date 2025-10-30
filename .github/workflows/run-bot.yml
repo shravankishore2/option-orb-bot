@@ -2,25 +2,38 @@ name: Run ORB Bot Every 5 Minutes
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch:
+    - cron: "*/5 * * * *"   # runs every 5 minutes
+  workflow_dispatch:          # allows manual trigger
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
 
-      - name: Set up Python
+    steps:
+      - name: 🧹 Checkout latest code (no cache)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: 🧠 Show commit info
+        run: |
+          echo "✅ Running latest commit:"
+          git log -1 --pretty=oneline
+
+      - name: 🐍 Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: 📦 Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run main script
+      - name: 🚀 Run main bot script
+        env:
+          TZ: "Asia/Kolkata"  # set timezone to IST
         run: |
+          echo "Running main.py at $(date)"
           python main.py
