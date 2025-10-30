@@ -1,15 +1,15 @@
-# main.py — Opening Range Breakout Strategy (optimized)
-# Fetches 9:15–9:30 OHLC once, then checks breakout every 5 minutes till 15:30 IST
+# main.py — Opening Range Breakout Strategy (GitHub Actions Optimized)
+# Fetches 9:15–9:30 OHLC once, then checks breakout once per GitHub Action run
 print("🧠 Running latest version of main.py...")
+
 import pandas as pd
-import time
 import datetime
 import pytz
+import yfinance as yf
 from fetch_symbols import get_symbols
 from fetch_ohlc import fetch_all
 from signal_generator import make_signal
 from notifier import load_config, format_and_send
-import yfinance as yf
 
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -24,7 +24,8 @@ def get_latest_5min_close(symbol):
         data.index = data.index.tz_convert(IST)
         latest = data.iloc[-1]
         return float(latest["Close"])
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Error fetching close for {symbol}: {e}")
         return None
 
 
@@ -83,28 +84,26 @@ def main():
         opening_df.to_csv("opening_15min_ohlc.csv", index=False)
         print(f"✅ Saved -> opening_15min_ohlc.csv ({len(opening_df)} rows)")
 
-    # Repeatedly check for breakouts every 5 minutes
-    while True:
-        now = datetime.datetime.now(IST).time()
+    # Run only once per GitHub Action trigger
+    now = datetime.datetime.now(datetime.timezone.utc).astimezone(IST).time()
+    print(f"🕒 Current IST time: {now}")
 
-        if True:  # ⚡ Force test mode
-            print(f"\n🕒 Checking breakouts at {datetime.datetime.now(IST).strftime('%H:%M:%S')} IST...")
-            try:
-                signals = check_breakouts(opening_df)
-                active_signals = [s for s in signals if s["signal"] in ("BUY", "SELL")]
+    if datetime.time(9, 35) <= now <= datetime.time(15, 30):
+        print(f"\n🕒 Checking breakouts at {datetime.datetime.now(IST).strftime('%H:%M:%S')} IST...")
+        try:
+            signals = check_breakouts(opening_df)
+            active_signals = [s for s in signals if s["signal"] in ("BUY", "SELL")]
 
-                if active_signals:
-                    print(f"✅ Found {len(active_signals)} breakout signals.")
-                    pd.DataFrame(active_signals).to_csv("latest_signals.csv", index=False)
-                    format_and_send(telegram_chat_id, active_signals, token=telegram_token)
-                else:
-                    print("ℹ️ No new breakouts this cycle.")
-            except Exception as e:
-                print(f"⚠️ Error checking breakouts: {e}")
-        else:
-            print(f"⏸️ Market closed ({now.strftime('%H:%M:%S')} IST). Waiting for next session...")
-
-        time.sleep(300)  # wait 5 minutes
+            if active_signals:
+                print(f"✅ Found {len(active_signals)} breakout signals.")
+                pd.DataFrame(active_signals).to_csv("latest_signals.csv", index=False)
+                format_and_send(telegram_chat_id, active_signals, token=telegram_token)
+            else:
+                print("ℹ️ No new breakouts this cycle.")
+        except Exception as e:
+            print(f"⚠️ Error checking breakouts: {e}")
+    else:
+        print(f"⏸️ Market closed ({now.strftime('%H:%M:%S')} IST). Exiting...")
 
 
 if __name__ == "__main__":
