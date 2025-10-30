@@ -1,0 +1,6 @@
+pandas
+yfinance
+pytz
+requests
+python-telegram-bot
+configparser
