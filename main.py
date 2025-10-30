@@ -88,7 +88,7 @@ def main():
     now = datetime.datetime.now(datetime.timezone.utc).astimezone(IST).time()
     print(f"🕒 Current IST time: {now}")
 
-    if datetime.time(9, 35) <= now <= datetime.time(15, 30):
+    if datetime.time(9, 30) <= now <= datetime.time(15, 30):
         print(f"\n🕒 Checking breakouts at {datetime.datetime.now(IST).strftime('%H:%M:%S')} IST...")
         try:
             signals = check_breakouts(opening_df)
