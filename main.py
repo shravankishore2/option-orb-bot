@@ -1,5 +1,6 @@
 # main.py — Opening Range Breakout Strategy (GitHub Actions Optimized)
-# Fetches 9:15–9:30 OHLC once, then checks breakout once per GitHub Action run
+# Fetches 9:15–9:30 OHLC once per day, then checks breakout once per GitHub Action run.
+
 print("🧠 Running latest version of main.py...")
 
 import pandas as pd
@@ -15,7 +16,7 @@ IST = pytz.timezone("Asia/Kolkata")
 
 
 def get_latest_5min_close(symbol):
-    """Fetch the latest 5-min candle close price."""
+    """Fetch the latest 5-minute candle close price."""
     try:
         ticker = f"{symbol}.NS"
         data = yf.download(ticker, period="1d", interval="5m", progress=False)
@@ -32,7 +33,6 @@ def get_latest_5min_close(symbol):
 def check_breakouts(opening_df):
     """Check breakout above/below the opening range."""
     signals = []
-
     for _, row in opening_df.iterrows():
         symbol = row["symbol"]
         latest_close = get_latest_5min_close(symbol)
@@ -54,7 +54,6 @@ def check_breakouts(opening_df):
             "close": latest_close,
             "signal": direction
         })
-
     return signals
 
 
@@ -69,27 +68,42 @@ def main():
     telegram_token = cfg.get("telegram_token")
     telegram_chat_id = cfg.get("telegram_chat_id")
 
-    # Load or fetch the opening range
+    today = datetime.datetime.now(IST).date()
+    need_refresh = True
+
+    # ---- Load or refresh OHLC data ----
     try:
         opening_df = pd.read_csv("opening_15min_ohlc.csv")
-        print("✅ Loaded saved Opening Range (9:15–9:30) data.")
+        if "date" in opening_df.columns:
+            file_date = pd.to_datetime(opening_df["date"].iloc[0]).date()
+            if file_date == today:
+                need_refresh = False
+                print("✅ Loaded today's saved Opening Range (9:15–9:30) data.")
+            else:
+                print(f"🔄 Old OHLC found (from {file_date}). Refreshing...")
+        else:
+            print("⚠️ No date column found in saved file, refreshing...")
     except FileNotFoundError:
-        print("📈 Fetching Opening Range (9:15–9:30) OHLC data...")
+        print("📈 No previous file found. Fetching new OHLC data...")
+
+    if need_refresh:
+        print("📊 Fetching fresh Opening Range (9:15–9:30) OHLC data...")
         symbols = get_symbols()
         rows = fetch_all(symbols)
         if not rows:
             print("⚠️ No OHLC data found.")
             return
         opening_df = pd.DataFrame(rows)
+        opening_df["date"] = today
         opening_df.to_csv("opening_15min_ohlc.csv", index=False)
-        print(f"✅ Saved -> opening_15min_ohlc.csv ({len(opening_df)} rows)")
+        print(f"✅ Saved new OHLC file for {today} ({len(opening_df)} rows).")
 
-    # Run only once per GitHub Action trigger
+    # ---- Check breakouts only during market hours ----
     now = datetime.datetime.now(datetime.timezone.utc).astimezone(IST).time()
-    print(f"🕒 Current IST time: {now}")
+    print(f"🕒 Current IST time: {now.strftime('%H:%M:%S')}")
 
     if datetime.time(9, 30) <= now <= datetime.time(15, 30):
-        print(f"\n🕒 Checking breakouts at {datetime.datetime.now(IST).strftime('%H:%M:%S')} IST...")
+        print(f"\n🔍 Checking breakouts at {datetime.datetime.now(IST).strftime('%H:%M:%S')} IST...")
         try:
             signals = check_breakouts(opening_df)
             active_signals = [s for s in signals if s["signal"] in ("BUY", "SELL")]
