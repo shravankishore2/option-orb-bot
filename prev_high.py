@@ -3,27 +3,25 @@ import yfinance as yf
 from fetch_ohlc import normalize_index_to_ist
 from fetch_symbols import get_symbols
 symbols = get_symbols()
-def Prev_day_high(symbols):
+def Prev_day_close(symbols):
     """Prev day high."""
-    prev_highs = {}
+    prev_closes = {}
     for sym in symbols:
         ticker = f"{sym}.NS"
         data = yf.download(ticker, period="2d", interval="1d", progress=False)
         if len(data) >= 2:
-            prev_high = data['High'].iloc[-2]
+            prev_close = data['Close'].iloc[-2]
         elif len(data) == 1:
-            prev_high = data['High'].iloc[-1]
+            prev_close = data['Close'].iloc[-1]
         else:
-            prev_high = None
+            prev_close = None
 
-        if prev_high is not None:
-            prev_highs[sym] = float(prev_high)
+        if prev_close is not None:
+            prev_closes[sym] = float(prev_close)
 
-    return prev_highs
+    return prev_closes
 
 
 # store dictionary
-prev_high_dict = Prev_day_high(symbols)
+prev_close_dict = Prev_day_close(symbols)
 
-# Example use
-print(prev_high_dict)

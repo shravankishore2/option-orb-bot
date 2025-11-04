@@ -1,112 +1,109 @@
-# backtest_opening_range.py
-# Backtest the 9:15–9:35 Opening Range Strategy using 5-minute candles (up to 60 days)
+# backtest_opening_range.py — Analyze historical ORB trades from trade_history.csv
+# Calculates profit/loss based on next-day close prices.
 
-import yfinance as yf
 import pandas as pd
-from datetime import time
-from fetch_symbols import get_symbols
+import yfinance as yf
+import datetime
+import pytz
+import os
+
+IST = pytz.timezone("Asia/Kolkata")
 
 
-def get_intraday_data(symbol, days=60):
-    ticker = f"{symbol}.NS"
+def get_next_day_close(symbol, trade_date):
+    """
+    Fetch the next day's closing price for a given symbol.
+    Returns None if unavailable.
+    """
     try:
-        data = yf.download(ticker, period=f"{days}d", interval="5m", progress=False)
+        ticker = f"{symbol}.NS"
+        start = (pd.to_datetime(trade_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        end = (pd.to_datetime(trade_date) + pd.Timedelta(days=2)).strftime("%Y-%m-%d")
+
+        data = yf.download(ticker, start=start, end=end, interval="1d", progress=False)
         if data.empty:
             return None
-
-        # --- FIX: Flatten multi-level columns ---
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = [c[0] for c in data.columns]
-
-        # Normalize column case
-        data.columns = [str(col).capitalize() for col in data.columns]
-
-        data.index = data.index.tz_convert("Asia/Kolkata")
-        data["Date"] = data.index.date
-        data["Time"] = data.index.time
-        return data
-
+        return float(data["Close"].iloc[-1])
     except Exception as e:
-        print(f"⚠️ Error fetching {symbol}: {e}")
+        print(f"⚠️ Error fetching next-day close for {symbol} ({trade_date}): {e}")
         return None
 
 
-def backtest_symbol(symbol, days=60):
-    print(f"🔹 Backtesting {symbol}...")
-    df = get_intraday_data(symbol, days)
-    if df is None or df.empty:
-        print(f"⚠️ No data for {symbol}")
-        return None
+def backtest_from_history(trade_file="trade_history.csv"):
+    """
+    Run a backtest on logged ORB trades using next-day close as exit price.
+    """
+    if not os.path.exists(trade_file):
+        print(f"❌ Trade history file '{trade_file}' not found.")
+        return
+
+    df = pd.read_csv(trade_file)
+    if df.empty:
+        print("⚠️ Trade history is empty.")
+        return
+
+    print(f"📊 Loaded {len(df)} historical trades from {trade_file}.")
+
+    df["Next_Close"] = None
+    df["PnL_%"] = None
+    df["Result"] = None
 
     results = []
-    for date, group in df.groupby("Date"):
-        # Select 9:15–9:35 range
-        window = group[(group["Time"] >= time(9, 15)) & (group["Time"] < time(9, 35))]
-        if window.empty:
+
+    for i, row in df.iterrows():
+        symbol = row["Symbol"]
+        trade_date = row["Date"]
+        signal = row["Signal"]
+        entry_price = float(row["Price"])
+
+        next_close = get_next_day_close(symbol, trade_date)
+        if next_close is None:
             continue
 
-        # Extract scalar OHLC values
-        o = float(window["Open"].iloc[0])
-        h = float(window["High"].max())
-        l = float(window["Low"].min())
-        c = float(window["Close"].iloc[-1])
-
-        # Direction based on 15-min range
-        if c > o:
-            direction = "BUY"
-        elif c < o:
-            direction = "SELL"
+        if signal == "BUY":
+            pnl = ((next_close - entry_price) / entry_price) * 100
+        elif signal == "SELL":
+            pnl = ((entry_price - next_close) / entry_price) * 100
         else:
-            direction = "HOLD"
-
-        after = group[group["Time"] >= time(9, 35)]
-        if after.empty:
             continue
 
-        entry_price = float(after["Open"].iloc[0])
-        exit_price = float(group["Close"].iloc[-1])
+        result = "WIN ✅" if pnl > 0 else "LOSS ❌"
 
-        pnl = (exit_price - entry_price) if direction == "BUY" else (entry_price - exit_price)
         results.append({
-            "Date": date,
+            "Date": trade_date,
             "Symbol": symbol,
-            "Direction": direction,
-            "Entry": entry_price,
-            "Exit": exit_price,
-            "PnL": pnl
+            "Signal": signal,
+            "Entry_Price": entry_price,
+            "Next_Day_Close": next_close,
+            "PnL_%": round(pnl, 2),
+            "Result": result
         })
 
     if not results:
-        print(f"⚠️ No valid days for {symbol}")
-        return None
-
-    return pd.DataFrame(results)
-
-
-def main():
-    symbols = get_symbols()
-    all_results = []
-
-    for sym in symbols:
-        df = backtest_symbol(sym, days=60)
-        if df is not None:
-            all_results.append(df)
-
-    if not all_results:
-        print("❌ No results generated.")
+        print("⚠️ No valid trades with next-day data found.")
         return
 
-    combined = pd.concat(all_results)
-    combined.to_csv("backtest_opening_range.csv", index=False)
+    result_df = pd.DataFrame(results)
+    result_df.to_csv("backtest_results.csv", index=False)
+    print(f"✅ Saved results -> backtest_results.csv ({len(result_df)} trades)")
 
-    print("\n✅ Backtest complete. Saved -> backtest_opening_range.csv")
+    # Summary stats
+    total_trades = len(result_df)
+    wins = (result_df["PnL_%"] > 0).sum()
+    losses = (result_df["PnL_%"] < 0).sum()
+    avg_pnl = result_df["PnL_%"].mean()
 
-    # Summary
-    summary = combined.groupby("Symbol")["PnL"].sum().sort_values(ascending=False)
-    print("\n🏁 Summary (Total P&L over period):")
-    print(summary)
-    print("\n💰 Total Portfolio P&L:", round(combined["PnL"].sum(), 2))
+    print("\n📈 Backtest Summary:")
+    print(f"Total Trades: {total_trades}")
+    print(f"Wins: {wins} | Losses: {losses}")
+    print(f"Win Rate: {wins / total_trades * 100:.2f}%")
+    print(f"Average PnL: {avg_pnl:.2f}%")
+
+    print("\nTop 10 Trades:")
+    print(result_df.sort_values("PnL_%", ascending=False).head(10)[
+        ["Date", "Symbol", "Signal", "PnL_%", "Result"]
+    ])
 
 
 if __name__ == "__main__":
-    main()
+    backtest_from_history()
