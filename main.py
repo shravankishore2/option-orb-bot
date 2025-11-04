@@ -1,11 +1,12 @@
-# main.py — Opening Range Breakout Strategy (GitHub Actions Optimized)
-# Fetches 9:15–9:30 OHLC once per day, then checks breakout once per GitHub Action run.
+# main.py — Opening Range Breakout Strategy (with trade history logging)
+# Fetches 9:15–9:30 OHLC once per day, sends only *new* breakout signals, and logs them historically.
 
 print("🧠 Running latest version of main.py...")
 
 import pandas as pd
 import datetime
 import pytz
+import os
 import yfinance as yf
 from fetch_symbols import get_symbols
 from fetch_ohlc import fetch_all
@@ -57,6 +58,61 @@ def check_breakouts(opening_df):
     return signals
 
 
+def load_sent_list():
+    """Load list of already sent symbols for today."""
+    today = datetime.datetime.now(IST).strftime("%Y-%m-%d")
+    file_path = f"sent_signals_{today}.txt"
+
+    if os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            return set(line.strip() for line in f.readlines() if line.strip())
+    return set()
+
+
+def save_sent_list(sent_symbols):
+    """Save updated list of sent symbols."""
+    today = datetime.datetime.now(IST).strftime("%Y-%m-%d")
+    file_path = f"sent_signals_{today}.txt"
+
+    with open(file_path, "w") as f:
+        for sym in sorted(sent_symbols):
+            f.write(sym + "\n")
+
+
+def append_trade_history(new_signals):
+    """Append new trades to historical log."""
+    if not new_signals:
+        return
+
+    file_path = "trade_history.csv"
+    now = datetime.datetime.now(IST)
+
+    history_rows = []
+    for s in new_signals:
+        history_rows.append({
+            "Date": now.strftime("%Y-%m-%d"),
+            "Time": now.strftime("%H:%M:%S"),
+            "Symbol": s["symbol"],
+            "Signal": s["signal"],
+            "Price": s["close"],
+            "ORH": s["high"],
+            "ORL": s["low"]
+        })
+
+    new_df = pd.DataFrame(history_rows)
+
+    # Append or create new file
+    if os.path.exists(file_path):
+        old_df = pd.read_csv(file_path)
+        combined = pd.concat([old_df, new_df], ignore_index=True)
+        combined.drop_duplicates(subset=["Date", "Symbol", "Signal"], keep="last", inplace=True)
+        combined.to_csv(file_path, index=False)
+    else:
+        new_df.to_csv(file_path, index=False)
+
+    print(f"💾 Added {len(new_signals)} new trades to trade_history.csv.")
+
+
 def main():
     print("📊 Starting Opening Range Breakout Scanner...")
 
@@ -98,6 +154,9 @@ def main():
         opening_df.to_csv("opening_15min_ohlc.csv", index=False)
         print(f"✅ Saved new OHLC file for {today} ({len(opening_df)} rows).")
 
+    # ---- Load already sent symbols ----
+    sent_symbols = load_sent_list()
+
     # ---- Check breakouts only during market hours ----
     now = datetime.datetime.now(datetime.timezone.utc).astimezone(IST).time()
     print(f"🕒 Current IST time: {now.strftime('%H:%M:%S')}")
@@ -108,12 +167,22 @@ def main():
             signals = check_breakouts(opening_df)
             active_signals = [s for s in signals if s["signal"] in ("BUY", "SELL")]
 
-            if active_signals:
-                print(f"✅ Found {len(active_signals)} breakout signals.")
-                pd.DataFrame(active_signals).to_csv("latest_signals.csv", index=False)
-                format_and_send(telegram_chat_id, active_signals, token=telegram_token)
+            # Filter out already sent signals
+            new_signals = [s for s in active_signals if s["symbol"] not in sent_symbols]
+
+            if new_signals:
+                print(f"✅ Found {len(new_signals)} new breakout signals.")
+                pd.DataFrame(new_signals).to_csv("latest_signals.csv", index=False)
+
+                # Send and log new trades
+                format_and_send(telegram_chat_id, new_signals, token=telegram_token)
+                append_trade_history(new_signals)
+
+                # Update sent list
+                sent_symbols.update(s["symbol"] for s in new_signals)
+                save_sent_list(sent_symbols)
             else:
-                print("ℹ️ No new breakouts this cycle.")
+                print("ℹ️ No *new* breakout signals this cycle.")
         except Exception as e:
             print(f"⚠️ Error checking breakouts: {e}")
     else:
