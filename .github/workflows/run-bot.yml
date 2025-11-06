@@ -1,21 +1,19 @@
-name: Run ORB Bot During Market Hours
+name: Run ORB Bot Every 5 Minutes
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/5 * * * *"  # Every 5 minutes
   workflow_dispatch:
-
-concurrency:
-  group: orb-bot
-  cancel-in-progress: true  # ensures old run is killed if a new one starts
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
       - name: 🧹 Checkout latest code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
 
       - name: 🧼 Force clean workspace
         run: |

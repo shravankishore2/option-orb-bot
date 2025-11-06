@@ -1,192 +1,263 @@
-# main.py — Opening Range Breakout Strategy (with trade history logging)
-# Fetches 9:15–9:30 OHLC once per day, sends only *new* breakout signals, and logs them historically.
-
+# main.py — Opening Range Breakout Strategy (with dedupe + history logging)
+# Fetches 9:15–9:30 OHLC once per day (saved), then on each run checks latest 5-min
+# candles and sends only NEW signals (per-symbol per-day) to Telegram.
 print("🧠 Running latest version of main.py...")
 
+import os
+import csv
 import pandas as pd
 import datetime
 import pytz
-import os
 import yfinance as yf
+
 from fetch_symbols import get_symbols
-from fetch_ohlc import fetch_all
-from signal_generator import make_signal
+from fetch_ohlc import fetch_all  # should return rows with symbol, open, high, low, close, and prev_close (see note)
+from signal_generator import generate_option_signals  # expects rows with prev_close present
 from notifier import load_config, format_and_send
 
 IST = pytz.timezone("Asia/Kolkata")
 
-
-def get_latest_5min_close(symbol):
-    """Fetch the latest 5-minute candle close price."""
-    try:
-        ticker = f"{symbol}.NS"
-        data = yf.download(ticker, period="1d", interval="5m", progress=False)
-        if data.empty:
-            return None
-        data.index = data.index.tz_convert(IST)
-        latest = data.iloc[-1]
-        return float(latest["Close"])
-    except Exception as e:
-        print(f"⚠️ Error fetching close for {symbol}: {e}")
-        return None
+# Files
+OPENING_OHLC_FILE = "opening_15min_ohlc.csv"      # daily saved ORB OHLC (with prev_close)
+SENT_LOG_FILE = "sent_notifications.csv"         # dedupe log for sent signals (date,symbol,direction,time)
+HISTORY_FILE = "backtest_opening_range.csv"      # full historical appended file for backtest/audit
 
 
-def check_breakouts(opening_df):
-    """Check breakout above/below the opening range."""
-    signals = []
-    for _, row in opening_df.iterrows():
-        symbol = row["symbol"]
-        latest_close = get_latest_5min_close(symbol)
-        if latest_close is None:
+def ensure_prev_close_in_rows(rows):
+    """
+    If fetch_all does not include prev_close, try to add prev_close by fetching 1d history.
+    Each row becomes: symbol, open, high, low, close, prev_close
+    """
+    enhanced = []
+    for r in rows:
+        if "prev_close" in r and r["prev_close"] is not None:
+            enhanced.append(r)
             continue
 
-        if latest_close > row["high"]:
-            direction = "BUY"
-        elif latest_close < row["low"]:
-            direction = "SELL"
-        else:
-            direction = "HOLD"
+        sym = r["symbol"]
+        try:
+            ticker = f"{sym}.NS"
+            df = yf.download(ticker, period="2d", interval="1d", progress=False)
+            prev_close = None
+            if len(df) >= 2:
+                prev_close = float(df["Close"].iloc[-2])
+            elif len(df) == 1:
+                prev_close = float(df["Close"].iloc[-1])
+            r["prev_close"] = prev_close
+        except Exception:
+            r["prev_close"] = None
+        enhanced.append(r)
+    return enhanced
 
-        signals.append({
-            "symbol": symbol,
-            "open": row["open"],
-            "high": row["high"],
-            "low": row["low"],
-            "close": latest_close,
-            "signal": direction
-        })
+
+def load_opening_df():
+    """Load today's opening dataframe if present and fresh. Returns df and bool refreshed"""
+    today = datetime.datetime.now(IST).date()
+    if os.path.exists(OPENING_OHLC_FILE):
+        try:
+            df = pd.read_csv(OPENING_OHLC_FILE)
+            # if file has 'date' column and matches today, return it
+            if "date" in df.columns:
+                file_date = pd.to_datetime(df["date"].iloc[0]).date()
+                if file_date == today:
+                    print("✅ Loaded today's saved Opening Range (9:15–9:30) data.")
+                    return df, False  # not refreshed
+                else:
+                    print(f"🔄 Old OHLC found (from {file_date}). Will refresh for {today}.")
+            else:
+                print("⚠️ Saved OHLC missing date column — refreshing.")
+        except Exception as e:
+            print(f"⚠️ Failed reading {OPENING_OHLC_FILE}: {e}")
+
+    # need to fetch new
+    print("📈 Fetching fresh Opening Range (9:15–9:30) OHLC data...")
+    symbols = get_symbols()
+    if not symbols:
+        print("⚠️ No symbols found (fetch_symbols).")
+        return None, False
+
+    rows = fetch_all(symbols)
+    if not rows:
+        print("⚠️ fetch_all returned no rows.")
+        return None, False
+
+    # ensure prev_close present for each row
+    rows = ensure_prev_close_in_rows(rows)
+    df = pd.DataFrame(rows)
+    df["date"] = today
+    df.to_csv(OPENING_OHLC_FILE, index=False)
+    print(f"✅ Saved new OHLC file for {today} ({len(df)} rows).")
+    return df, True
+
+
+def load_sent_log():
+    """
+    Load sent_notifications.csv into a set for quick membership checks.
+    Format columns: date,symbol,direction,time
+    """
+    today = datetime.datetime.now(IST).date().isoformat()
+    seen = set()
+    # If file missing -> nothing seen
+    if not os.path.exists(SENT_LOG_FILE):
+        return seen
+
+    try:
+        df = pd.read_csv(SENT_LOG_FILE)
+        if df.empty:
+            return seen
+        # If file contains no rows for today -> clear it (start fresh)
+        if "date" in df.columns:
+            if not any(pd.to_datetime(df["date"]).dt.date == datetime.datetime.now(IST).date()):
+                # clear file
+                print("🧹 Sent log contains no entries for today — clearing sent log.")
+                open(SENT_LOG_FILE, "w").close()
+                return set()
+        # Build set of (date,symbol,direction)
+        for _, row in df.iterrows():
+            d = str(row.get("date", "")).strip()
+            sym = str(row.get("symbol", "")).strip().upper()
+            dirn = str(row.get("direction", "")).strip().upper()
+            seen.add((d, sym, dirn))
+    except Exception as e:
+        print(f"⚠️ Failed to load sent log: {e}")
+    return seen
+
+
+def append_sent_log(entries):
+    """
+    Append list of dicts to sent_notifications.csv
+    each entry: {'date':..., 'symbol':..., 'direction':..., 'time':...}
+    """
+    header_needed = not os.path.exists(SENT_LOG_FILE) or os.path.getsize(SENT_LOG_FILE) == 0
+    with open(SENT_LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["date", "symbol", "direction", "time"])
+        if header_needed:
+            writer.writeheader()
+        for e in entries:
+            writer.writerow(e)
+
+
+def append_history(entries):
+    """
+    Append sent signals to backtest_opening_range.csv (history).
+    Keep columns: date,time,symbol,direction,open,high,low,entry_close,prev_close,suggested_action
+    """
+    header_needed = not os.path.exists(HISTORY_FILE) or os.path.getsize(HISTORY_FILE) == 0
+    with open(HISTORY_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            "date", "time", "symbol", "direction",
+            "open", "high", "low", "entry_close", "prev_close", "suggested_action"
+        ])
+        if header_needed:
+            writer.writeheader()
+        for e in entries:
+            writer.writerow(e)
+
+
+def filter_already_sent(active_signals, seen_set):
+    """
+    active_signals: list of dicts (symbol,direction,open,high,low,close,prev_close,suggested_action)
+    seen_set: set of tuples (date_str, SYMBOL, DIRECTION)
+    Returns: new_signals (not yet sent today)
+    """
+    today_str = datetime.datetime.now(IST).date().isoformat()
+    new = []
+    for s in active_signals:
+        key = (today_str, s["symbol"].strip().upper(), s["signal"].strip().upper() if "signal" in s else s.get("direction","").strip().upper())
+        if key in seen_set:
+            continue
+        new.append(s)
+    return new
+
+
+def build_telegram_payload(signals):
+    """
+    Build a single message text for signal list using notifier.format_message
+    We pass signals as is (each should contain suggested_action).
+    """
     return signals
 
 
-def load_sent_list():
-    """Load list of already sent symbols for today."""
-    today = datetime.datetime.now(IST).strftime("%Y-%m-%d")
-    file_path = f"sent_signals_{today}.txt"
-
-    if os.path.exists(file_path):
-        with open(file_path, "r") as f:
-            return set(line.strip() for line in f.readlines() if line.strip())
-    return set()
+def now_time_str():
+    return datetime.datetime.now(IST).strftime("%H:%M:%S")
 
 
-def save_sent_list(sent_symbols):
-    """Save updated list of sent symbols."""
-    today = datetime.datetime.now(IST).strftime("%Y-%m-%d")
-    file_path = f"sent_signals_{today}.txt"
-
-    with open(file_path, "w") as f:
-        for sym in sorted(sent_symbols):
-            f.write(sym + "\n")
-
-
-def append_trade_history(new_signals):
-    """Append new trades to historical log."""
-    if not new_signals:
+def run_cycle():
+    # Load or refresh opening OHLC (once per day)
+    opening_df, refreshed = load_opening_df()
+    if opening_df is None or opening_df.empty:
+        print("⚠️ No opening OHLC available — exiting this run.")
         return
 
-    file_path = "trade_history.csv"
-    now = datetime.datetime.now(IST)
+    # Prepare list of rows (dicts) for signal generator
+    rows = opening_df.to_dict(orient="records")
 
-    history_rows = []
-    for s in new_signals:
-        history_rows.append({
-            "Date": now.strftime("%Y-%m-%d"),
-            "Time": now.strftime("%H:%M:%S"),
-            "Symbol": s["symbol"],
-            "Signal": s["signal"],
-            "Price": s["close"],
-            "ORH": s["high"],
-            "ORL": s["low"]
-        })
+    # generate signals (uses your signal_generator.generate_option_signals which enforces 2% filter)
+    signals = generate_option_signals(rows)
+    if not signals:
+        print("ℹ️ No signals generated by signal_generator this run.")
+        return
 
-    new_df = pd.DataFrame(history_rows)
+    # dedupe
+    seen = load_sent_log()
+    new_signals = filter_already_sent(signals, seen)
+    if not new_signals:
+        print("ℹ️ All signals already sent today — nothing new to send.")
+        return
 
-    # Append or create new file
-    if os.path.exists(file_path):
-        old_df = pd.read_csv(file_path)
-        combined = pd.concat([old_df, new_df], ignore_index=True)
-        combined.drop_duplicates(subset=["Date", "Symbol", "Signal"], keep="last", inplace=True)
-        combined.to_csv(file_path, index=False)
-    else:
-        new_df.to_csv(file_path, index=False)
-
-    print(f"💾 Added {len(new_signals)} new trades to trade_history.csv.")
-
-
-def main():
-    print("📊 Starting Opening Range Breakout Scanner...")
-
+    # Prepare message and send via notifier (format_and_send expects chat_id and signals)
     cfg = load_config()
     if not cfg:
-        print("⚠️ Config file not found or invalid.")
+        print("⚠️ config.ini missing or invalid.")
         return
-
     telegram_token = cfg.get("telegram_token")
     telegram_chat_id = cfg.get("telegram_chat_id")
 
-    today = datetime.datetime.now(IST).date()
-    need_refresh = True
+    # Optionally transform signals to notifier-friendly structure; here we pass as-is
+    payload_signals = build_telegram_payload(new_signals)
 
-    # ---- Load or refresh OHLC data ----
-    try:
-        opening_df = pd.read_csv("opening_15min_ohlc.csv")
-        if "date" in opening_df.columns:
-            file_date = pd.to_datetime(opening_df["date"].iloc[0]).date()
-            if file_date == today:
-                need_refresh = False
-                print("✅ Loaded today's saved Opening Range (9:15–9:30) data.")
-            else:
-                print(f"🔄 Old OHLC found (from {file_date}). Refreshing...")
-        else:
-            print("⚠️ No date column found in saved file, refreshing...")
-    except FileNotFoundError:
-        print("📈 No previous file found. Fetching new OHLC data...")
+    sent_ok = format_and_send(telegram_chat_id, payload_signals, token=telegram_token)
+    now_date = datetime.datetime.now(IST).date().isoformat()
+    now_t = now_time_str()
 
-    if need_refresh:
-        print("📊 Fetching fresh Opening Range (9:15–9:30) OHLC data...")
-        symbols = get_symbols()
-        rows = fetch_all(symbols)
-        if not rows:
-            print("⚠️ No OHLC data found.")
-            return
-        opening_df = pd.DataFrame(rows)
-        opening_df["date"] = today
-        opening_df.to_csv("opening_15min_ohlc.csv", index=False)
-        print(f"✅ Saved new OHLC file for {today} ({len(opening_df)} rows).")
-
-    # ---- Load already sent symbols ----
-    sent_symbols = load_sent_list()
-
-    # ---- Check breakouts only during market hours ----
-    now = datetime.datetime.now(datetime.timezone.utc).astimezone(IST).time()
-    print(f"🕒 Current IST time: {now.strftime('%H:%M:%S')}")
-
-    if datetime.time(9, 30) <= now <= datetime.time(15, 30):
-        print(f"\n🔍 Checking breakouts at {datetime.datetime.now(IST).strftime('%H:%M:%S')} IST...")
-        try:
-            signals = check_breakouts(opening_df)
-            active_signals = [s for s in signals if s["signal"] in ("BUY", "SELL")]
-
-            # Filter out already sent signals
-            new_signals = [s for s in active_signals if s["symbol"] not in sent_symbols]
-
-            if new_signals:
-                print(f"✅ Found {len(new_signals)} new breakout signals.")
-                pd.DataFrame(new_signals).to_csv("latest_signals.csv", index=False)
-
-                # Send and log new trades
-                format_and_send(telegram_chat_id, new_signals, token=telegram_token)
-                append_trade_history(new_signals)
-
-                # Update sent list
-                sent_symbols.update(s["symbol"] for s in new_signals)
-                save_sent_list(sent_symbols)
-            else:
-                print("ℹ️ No *new* breakout signals this cycle.")
-        except Exception as e:
-            print(f"⚠️ Error checking breakouts: {e}")
+    if sent_ok:
+        print(f"📨 Sent {len(new_signals)} new signals at {now_t} IST.")
+        # record in sent log & history
+        sent_rows = []
+        hist_rows = []
+        for s in new_signals:
+            direction = s.get("signal") or s.get("direction") or ""
+            sent_rows.append({"date": now_date, "symbol": s["symbol"].strip().upper(), "direction": direction, "time": now_t})
+            hist_rows.append({
+                "date": now_date,
+                "time": now_t,
+                "symbol": s["symbol"].strip().upper(),
+                "direction": direction,
+                "open": s.get("open"),
+                "high": s.get("high"),
+                "low": s.get("low"),
+                "entry_close": s.get("close"),
+                "prev_close": s.get("prev_close"),
+                "suggested_action": s.get("suggested_action", "")
+            })
+        append_sent_log(sent_rows)
+        append_history(hist_rows)
     else:
-        print(f"⏸️ Market closed ({now.strftime('%H:%M:%S')} IST). Exiting...")
+        print("⚠️ Telegram send failed; will not mark as sent.")
+
+
+def main():
+    # Run one check cycle (intended to be called by scheduler / GitHub Action every 5 min)
+    now_ist = datetime.datetime.now(datetime.timezone.utc).astimezone(IST).time()
+    print(f"🕒 Current IST time: {now_ist.strftime('%H:%M:%S')}")
+    # Only run checks during market hours (9:30 - 15:30 IST). You can change bounds if you want.
+    if datetime.time(9, 30) <= now_ist <= datetime.time(15, 30):
+        try:
+            run_cycle()
+        except Exception as e:
+            print(f"⚠️ Error during run_cycle: {e}")
+    else:
+        print("⏸️ Outside market hours — skipping this run.")
 
 
 if __name__ == "__main__":
