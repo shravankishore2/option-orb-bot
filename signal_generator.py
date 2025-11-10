@@ -1,48 +1,54 @@
-# signal_generator.py — Generate ORB signals with prev-close filter
+# signal_generator.py — generates option signals based on ORB breakout + 2% move
 
-def make_signal(ohlc_row):
+def generate_option_signals(rows):
     """
-    Generates BUY/SELL signals based on:
-      - Breakout above ORH or below ORL
-      - Must move ±2% from previous day's close
+    Generate BUY/SELL signals based on:
+    - Opening Range Breakout (close > ORH or close < ORL)
+    - AND at least 2% move from the previous day's close.
     """
-    symbol = ohlc_row["symbol"]
-    o, h, l, c = ohlc_row["open"], ohlc_row["high"], ohlc_row["low"], ohlc_row["close"]
-    prev_close = ohlc_row.get("prev_close")
+    signals = []
 
-    if not prev_close:
-        return None
+    for r in rows:
+        symbol = r["symbol"]
+        o = r["open"]
+        h = r["high"]
+        l = r["low"]
+        c = r["close"]
+        prev = r.get("prev_close")
 
-    if c > h and c >= 1.02 * prev_close:
-        direction = "BUY"
-    elif c < l and c <= 0.98 * prev_close:
-        direction = "SELL"
-    else:
-        return None
+        if not prev or prev == 0:
+            continue  # skip if prev close missing
 
-    strike = int(round(c / 50) * 50)
-    action = f"BUY {symbol} {'CALL' if direction == 'BUY' else 'PUT'} near {strike} strike"
+        direction = None
+        suggested_action = None
 
-    return {
-        "symbol": symbol,
-        "signal": direction,
-        "open": o,
-        "high": h,
-        "low": l,
-        "close": c,
-        "prev_close": prev_close,
-        "suggested_action": action,
-    }
+        # 🟢 BUY condition: breakout above ORH AND +2% from prev close
+        if (c >= h * 1.001) and (c >= prev * 1.018):  # small tolerance for rounding
+            direction = "BUY"
+            suggested_action = f"BUY {symbol} CALL near {int(round(c / 50) * 50)} strike"
 
+        # 🔴 SELL condition: breakdown below ORL AND -2% from prev close
+        elif (c <= l * 0.999) and (c <= prev * 0.982):
+            direction = "SELL"
+            suggested_action = f"BUY {symbol} PUT near {int(round(c / 50) * 50)} strike"
 
-def generate_option_signals(ohlc_rows):
-    """Generates valid option trades from a list of OHLC rows."""
-    return [sig for row in ohlc_rows if (sig := make_signal(row))]
+        if direction:
+            signals.append({
+                "symbol": symbol,
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "prev_close": prev,
+                "signal": direction,
+                "suggested_action": suggested_action
+            })
+        else:
+            # 🔍 Debug: helps identify near-miss conditions
+            diff_from_orh = round((c - h) / h * 100, 2)
+            diff_from_prev = round((c - prev) / prev * 100, 2)
+            if abs(diff_from_orh) < 1.5 or abs(diff_from_prev) < 2.5:
+                print(f"ℹ️ {symbol}: Close={c:.2f}, ORH={h:.2f}, ORL={l:.2f}, Prev={prev:.2f} "
+                      f"→ ΔORH={diff_from_orh}%, ΔPrev={diff_from_prev}%")
 
-
-if __name__ == "__main__":
-    sample = [
-        {"symbol": "RELIANCE", "open": 2500, "high": 2520, "low": 2490, "close": 2550, "prev_close": 2470},
-        {"symbol": "TCS", "open": 3600, "high": 3620, "low": 3590, "close": 3615, "prev_close": 3595},
-    ]
-    print(generate_option_signals(sample))
+    return signals
