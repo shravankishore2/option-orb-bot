@@ -1,112 +1,157 @@
-# main.py — Opening Range Breakout Strategy (real-time signal version)
-# Works anytime between 9:15–15:30, fetches latest close, compares vs ORH/ORL + 2% move.
+# main.py — Opening Range Breakout Strategy with Live 5-Min Update + Backtest Logging
 
 print("🧠 Running latest version of main.py...")
 
-import os
-import csv
-import pandas as pd
-import datetime
-import pytz
-import yfinance as yf
-
+import os, csv, datetime, pytz, yfinance as yf, pandas as pd
 from fetch_symbols import get_symbols
-from fetch_ohlc import fetch_all
+from fetch_ohlc import fetch_all     # returns opening 9:15–9:30 data
 from signal_generator import generate_option_signals
 from notifier import load_config, format_and_send
 
 IST = pytz.timezone("Asia/Kolkata")
-OPENING_OHLC_FILE = "opening_15min_ohlc.csv"
+OPENING_FILE = "opening_15min_ohlc.csv"
+SENT_FILE = "sent_notifications.csv"
+BACKTEST_FILE = "backtest_opening_range.csv"
 
 
-def get_latest_5min_close(symbol):
-    """Fetch the latest 5-minute close for the symbol."""
+# ---------- helpers ----------
+def now_time_str():
+    return datetime.datetime.now(IST).strftime("%H:%M:%S")
+
+def today_date():
+    return datetime.datetime.now(IST).date()
+
+
+# ---------- load morning ORB ----------
+def load_opening_df():
+    """Load today's ORB or fetch new if missing."""
+    today = today_date()
+    if os.path.exists(OPENING_FILE):
+        try:
+            df = pd.read_csv(OPENING_FILE)
+            if "date" in df.columns and pd.to_datetime(df["date"].iloc[0]).date() == today:
+                print("✅ Loaded today's Opening Range (9:15–9:30).")
+                return df
+        except Exception:
+            pass
+    print("📈 Fetching fresh 9:15–9:30 ORB data...")
+    symbols = get_symbols()
+    rows = fetch_all(symbols)
+    df = pd.DataFrame(rows)
+    df["date"] = today
+    df.to_csv(OPENING_FILE, index=False)
+    return df
+
+
+# ---------- get latest 5-min close ----------
+def get_latest_close(symbol):
     try:
-        ticker = f"{symbol}.NS"
-        data = yf.download(ticker, period="1d", interval="5m", progress=False)
-        if data.empty:
+        data = yf.download(f"{symbol}.NS", period="1d", interval="5m", progress=False)
+        if len(data) == 0:
             return None
-        data.index = data.index.tz_convert(IST)
         return float(data["Close"].iloc[-1])
     except Exception:
         return None
 
 
-def update_latest_closes(opening_df):
-    """Attach latest close prices to opening dataframe."""
-    updated_rows = []
-    for _, row in opening_df.iterrows():
-        symbol = row["symbol"]
-        latest_close = get_latest_5min_close(symbol)
-        if latest_close is None:
-            continue
-        row["close"] = latest_close
-        updated_rows.append(row)
-    return pd.DataFrame(updated_rows)
+# ---------- sent log ----------
+def load_sent():
+    if not os.path.exists(SENT_FILE):
+        return set()
+    df = pd.read_csv(SENT_FILE)
+    today = today_date().isoformat()
+    seen = set()
+    for _, r in df.iterrows():
+        seen.add((r["date"], r["symbol"], r["direction"]))
+    return seen
+
+def append_sent(entries):
+    header = not os.path.exists(SENT_FILE) or os.path.getsize(SENT_FILE) == 0
+    with open(SENT_FILE, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["date", "symbol", "direction", "time"])
+        if header:
+            w.writeheader()
+        for e in entries:
+            w.writerow(e)
 
 
-def main():
-    print("📊 Starting Opening Range Breakout Scanner...")
+# ---------- backtest log ----------
+def append_backtest(entries):
+    header = not os.path.exists(BACKTEST_FILE) or os.path.getsize(BACKTEST_FILE) == 0
+    with open(BACKTEST_FILE, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=[
+            "date", "time", "symbol", "direction",
+            "entry_price", "ORH", "ORL", "prev_close", "suggested_action"
+        ])
+        if header:
+            w.writeheader()
+        for e in entries:
+            w.writerow(e)
 
-    now_ist = datetime.datetime.now(datetime.timezone.utc).astimezone(IST)
-    current_time = now_ist.time()
 
-    if not (datetime.time(9, 15) <= current_time <= datetime.time(15, 30)):
-        print(f"⏸️ Market closed ({current_time.strftime('%H:%M:%S')} IST). Exiting.")
+# ---------- run + send ----------
+def run_and_send(signals):
+    if not signals:
+        print("ℹ️ No signals to send.")
         return
-
-    today = now_ist.date()
-
-    # Load or refresh OHLC data
-    need_refresh = True
-    if os.path.exists(OPENING_OHLC_FILE):
-        df = pd.read_csv(OPENING_OHLC_FILE)
-        if "date" in df.columns:
-            file_date = pd.to_datetime(df["date"].iloc[0]).date()
-            if file_date == today:
-                print("✅ Loaded today's saved Opening Range (9:15–9:30) data.")
-                need_refresh = False
-            else:
-                print(f"🔄 Old OHLC found (from {file_date}). Refreshing...")
-        else:
-            print("⚠️ No date column in saved file — refreshing data.")
-
-    if need_refresh:
-        print("📈 Fetching fresh 9:15–9:30 OHLC data...")
-        symbols = get_symbols()
-        rows = fetch_all(symbols)
-        if not rows:
-            print("⚠️ No OHLC data fetched.")
-            return
-        df = pd.DataFrame(rows)
-        df["date"] = today
-        df.to_csv(OPENING_OHLC_FILE, index=False)
-        print(f"✅ Saved new file ({len(df)} rows).")
-
-    # Update with latest closes
-    print("🔁 Fetching latest 5-minute closes for all symbols...")
-    updated_df = update_latest_closes(df)
-    if updated_df.empty:
-        print("⚠️ No updated close data available.")
+    cfg = load_config()
+    if not cfg:
+        print("⚠️ Config invalid.")
         return
+    token, chat = cfg["telegram_token"], cfg["telegram_chat_id"]
+    ok = format_and_send(chat, signals, token=token)
+    nowd, nowt = today_date().isoformat(), now_time_str()
+    logs = []
+    for s in signals:
+        logs.append({
+            "date": nowd, "time": nowt, "symbol": s["symbol"],
+            "direction": s["signal"], "entry_price": s["close"],
+            "ORH": s["high"], "ORL": s["low"],
+            "prev_close": s["prev_close"], "suggested_action": s.get("suggested_action", "")
+        })
+    append_backtest(logs)
+    if ok:
+        print(f"✅ Sent {len(signals)} signals & logged to backtest_opening_range.csv.")
+        append_sent([{"date": nowd, "symbol": s["symbol"], "direction": s["signal"], "time": nowt} for s in signals])
+    else:
+        print("⚠️ Telegram failed, still logged to backtest.")
 
-    # Generate signals (ORB + 2%)
-    signals = generate_option_signals(updated_df.to_dict(orient="records"))
+
+# ---------- main cycle ----------
+def run_cycle():
+    print("📊 Starting ORB Live Scan...")
+    df = load_opening_df()
+    rows = df.to_dict("records")
+
+    # 🔹 get latest 5m close for each symbol
+    print("🔁 Fetching latest 5-minute closes...")
+    for r in rows:
+        latest = get_latest_close(r["symbol"])
+        if latest: r["close"] = latest
+
+    signals = generate_option_signals(rows)
     if not signals:
         print("ℹ️ No signals generated this run.")
         return
 
-    # Send via Telegram
-    cfg = load_config()
-    if not cfg:
-        print("⚠️ Config file missing or invalid.")
+    seen = load_sent()
+    today_s = today_date().isoformat()
+    new = [s for s in signals if (today_s, s["symbol"], s["signal"]) not in seen]
+    if not new:
+        print("ℹ️ All signals already sent today.")
         return
 
-    telegram_token = cfg.get("telegram_token")
-    telegram_chat_id = cfg.get("telegram_chat_id")
-    format_and_send(telegram_chat_id, signals, token=telegram_token)
+    run_and_send(new)
 
-    print(f"✅ Sent {len(signals)} signals successfully at {now_ist.strftime('%H:%M:%S')} IST.")
+
+def main():
+    now_ist = datetime.datetime.now(datetime.timezone.utc).astimezone(IST).time()
+    print(f"🕒 Current IST time: {now_ist.strftime('%H:%M:%S')}")
+    # allow testing anytime
+    if True or (datetime.time(9,30) <= now_ist <= datetime.time(15,30)):
+        run_cycle()
+    else:
+        print("⏸️ Outside hours.")
 
 
 if __name__ == "__main__":
