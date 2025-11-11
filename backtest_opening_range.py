@@ -1,11 +1,12 @@
-# backtest_opening_range.py — Analyze historical ORB trades from trade_history.csv
-# Calculates profit/loss based on next-day close prices.
+# backtest_opening_range.py — Backtest ORB trades from backtest_opening_range.csv
+# Calculates profit/loss based on next-day close prices safely.
 
 import pandas as pd
 import yfinance as yf
 import datetime
 import pytz
 import os
+import time
 
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -13,14 +14,20 @@ IST = pytz.timezone("Asia/Kolkata")
 def get_next_day_close(symbol, trade_date):
     """
     Fetch the next day's closing price for a given symbol.
-    Returns None if unavailable.
+    Returns None if date is in the future or data missing.
     """
+    trade_dt = pd.to_datetime(trade_date)
+    next_day = trade_dt + pd.Timedelta(days=1)
+
+    if next_day.date() > datetime.datetime.now(IST).date():
+        return None  # skip future dates
+
     try:
         ticker = f"{symbol}.NS"
-        start = (pd.to_datetime(trade_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-        end = (pd.to_datetime(trade_date) + pd.Timedelta(days=2)).strftime("%Y-%m-%d")
+        start = next_day.strftime("%Y-%m-%d")
+        end = (next_day + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
-        data = yf.download(ticker, start=start, end=end, interval="1d", progress=False)
+        data = yf.download(ticker, start=start, end=end, interval="1d", progress=False, auto_adjust=False)
         if data.empty:
             return None
         return float(data["Close"].iloc[-1])
@@ -29,7 +36,7 @@ def get_next_day_close(symbol, trade_date):
         return None
 
 
-def backtest_from_history(trade_file="trade_history.csv"):
+def backtest_from_history(trade_file="backtest_opening_range.csv"):
     """
     Run a backtest on logged ORB trades using next-day close as exit price.
     """
@@ -42,21 +49,24 @@ def backtest_from_history(trade_file="trade_history.csv"):
         print("⚠️ Trade history is empty.")
         return
 
+    df.columns = [c.strip().lower() for c in df.columns]
     print(f"📊 Loaded {len(df)} historical trades from {trade_file}.")
 
-    df["Next_Close"] = None
-    df["PnL_%"] = None
-    df["Result"] = None
-
     results = []
+    total = len(df)
 
     for i, row in df.iterrows():
-        symbol = row["Symbol"]
-        trade_date = row["Date"]
-        signal = row["Signal"]
-        entry_price = float(row["Price"])
+        symbol = str(row.get("symbol", "")).strip().upper()
+        trade_date = row.get("date")
+        signal = str(row.get("direction", "")).strip().upper()
+        entry_price = float(row.get("entry_price", 0))
+
+        if not symbol or not trade_date:
+            continue
 
         next_close = get_next_day_close(symbol, trade_date)
+        time.sleep(0.5)  # avoid Yahoo API throttling
+
         if next_close is None:
             continue
 
@@ -80,21 +90,21 @@ def backtest_from_history(trade_file="trade_history.csv"):
         })
 
     if not results:
-        print("⚠️ No valid trades with next-day data found.")
+        print("⚠️ No valid trades with next-day data found (future trades skipped).")
         return
 
     result_df = pd.DataFrame(results)
     result_df.to_csv("backtest_results.csv", index=False)
     print(f"✅ Saved results -> backtest_results.csv ({len(result_df)} trades)")
 
-    # Summary stats
+    # Summary
     total_trades = len(result_df)
     wins = (result_df["PnL_%"] > 0).sum()
     losses = (result_df["PnL_%"] < 0).sum()
     avg_pnl = result_df["PnL_%"].mean()
 
     print("\n📈 Backtest Summary:")
-    print(f"Total Trades: {total_trades}")
+    print(f"Total Trades: {total_trades} (out of {total})")
     print(f"Wins: {wins} | Losses: {losses}")
     print(f"Win Rate: {wins / total_trades * 100:.2f}%")
     print(f"Average PnL: {avg_pnl:.2f}%")
