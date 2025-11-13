@@ -1,12 +1,12 @@
 # main.py — Opening Range Breakout Strategy with Live 5-Min Update + Backtest Logging
 
-print("🧠 Running latest version of main.py...")
-
-import os, csv, datetime, pytz, yfinance as yf, pandas as pd
+import os, csv, datetime, pytz, yfinance as yf, pandas as pd, time
 from fetch_symbols import get_symbols
 from fetch_ohlc import fetch_all     # returns opening 9:15–9:30 data
 from signal_generator import generate_option_signals
 from notifier import load_config, format_and_send
+
+print("🧠 Running latest version of main.py...")
 
 IST = pytz.timezone("Asia/Kolkata")
 OPENING_FILE = "opening_15min_ohlc.csv"
@@ -127,7 +127,8 @@ def run_cycle():
     print("🔁 Fetching latest 5-minute closes...")
     for r in rows:
         latest = get_latest_close(r["symbol"])
-        if latest: r["close"] = latest
+        if latest:
+            r["close"] = latest
 
     signals = generate_option_signals(rows)
     if not signals:
@@ -145,13 +146,20 @@ def run_cycle():
 
 
 def main():
-    now_ist = datetime.datetime.now(datetime.timezone.utc).astimezone(IST).time()
-    print(f"🕒 Current IST time: {now_ist.strftime('%H:%M:%S')}")
-    # allow testing anytime
-    if True or (datetime.time(9,30) <= now_ist <= datetime.time(15,30)):
-        run_cycle()
-    else:
-        print("⏸️ Outside hours.")
+    print("🚀 Starting continuous ORB bot (5-min intervals)...\n")
+    try:
+        while True:
+            now_ist = datetime.datetime.now(datetime.timezone.utc).astimezone(IST).time()
+            print(f"🕒 Current IST time: {now_ist.strftime('%H:%M:%S')}")
+            # Run only during market hours
+            if datetime.time(9, 30) <= now_ist <= datetime.time(15, 30):
+                run_cycle()
+            else:
+                print("⏸️ Market closed — waiting for next session.")
+            print("💤 Sleeping 5 minutes before next check...\n")
+            time.sleep(300)  # 5 minutes
+    except KeyboardInterrupt:
+        print("\n🛑 Stopped manually.")
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ def format_message(signals):
         msg += [f"• {s.get('suggested_action')}" for s in sell_signals]
         msg.append("")
 
-    msg.append("— Automated by Python 📈")
+    msg.append("— Automated by Shravan 📈")
     return "\n".join(msg)
 
 
