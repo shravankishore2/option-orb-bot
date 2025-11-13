@@ -25,12 +25,12 @@ def generate_option_signals(rows):
         # 🟢 BUY condition: breakout above ORH AND +2% from prev close
         if (c >= h * 1.001) and (c >= prev * 1.018):  # small tolerance for rounding
             direction = "BUY"
-            suggested_action = f"BUY {symbol} CALL near {int(round(c / 50) * 50)} strike"
+            suggested_action = f"BUY {symbol}"
 
         # 🔴 SELL condition: breakdown below ORL AND -2% from prev close
         elif (c <= l * 0.999) and (c <= prev * 0.982):
             direction = "SELL"
-            suggested_action = f"BUY {symbol} PUT near {int(round(c / 50) * 50)} strike"
+            suggested_action = f"SELL {symbol} "
 
         if direction:
             signals.append({

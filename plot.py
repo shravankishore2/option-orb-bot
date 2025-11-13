@@ -67,7 +67,9 @@ def plot_portfolio_curve(file_path=BACKTEST_FILE):
     final_pnl = daily_pnl["Cumulative_PnL"].iloc[-1]
     print(f"✅ Plot saved as '{OUTPUT_FILE}'")
     print(f"📊 Final Cumulative Portfolio PnL: {final_pnl:.2f}%")
+    print(f"📈 Average PnL per Day: {final_pnl/len(daily_pnl):.2f}%")
     print(daily_pnl)
+
 
 if __name__ == "__main__":
     plot_portfolio_curve()
