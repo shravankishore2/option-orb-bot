@@ -4,6 +4,12 @@ import requests
 from datetime import datetime
 import os
 import configparser
+import pandas as pd
+
+lots=pd.read_csv('Lot_size.csv')
+def get_lot_size(symbol):
+    row = lots.loc[lots["symbol"] == symbol, "lot_size"]
+    return int(row.iloc[0]) if not row.empty else None
 
 
 def format_message(signals):
@@ -18,15 +24,19 @@ def format_message(signals):
         "📊 *Opening Range Strategy (9:15–9:30)*",
         f"📅 {datetime.now().strftime('%d-%b-%Y')} | 🕒 {datetime.now().strftime('%H:%M')}\n",
     ]
-
     if buy_signals:
         msg.append("🟢 *BUY CALLS*")
-        msg += [f"• {s.get('suggested_action')}" for s in buy_signals]
+        msg += [(f"• {s.get('signal')}"
+                 f" CMP:{s.get('close')},PDC:{s.get('prev_close')}"
+                 f"ORH:{s.get('ORH')},ORL:{s.get('ORL')}"
+                 f"Lot Size={get_lot_size(s.get('symbol'))}") for s in buy_signals]
         msg.append("")
 
     if sell_signals:
         msg.append("🔴 *BUY PUTS*")
-        msg += [f"• {s.get('suggested_action')}" for s in sell_signals]
+        msg += [(f"• {s.get('signal')}"
+                 f"CMP:{s.get('close')},PDC:{s.get('prev_close')}"
+                 f"ORH:{s.get('ORH')},ORL:{s.get('ORL')}") for s in sell_signals]
         msg.append("")
 
     msg.append("— Automated by Shravan 📈")

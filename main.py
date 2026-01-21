@@ -1,4 +1,4 @@
-# main.py — Opening Range Breakout Strategy with Live 5-Min Update + Backtest Logging
+    # main.py — Opening Range Breakout Strategy with Live 5-Min Update + Backtest Logging
 
 import os, csv, datetime, pytz, yfinance as yf, pandas as pd, time
 from fetch_symbols import get_symbols
@@ -81,7 +81,7 @@ def append_backtest(entries):
     with open(BACKTEST_FILE, "a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=[
             "date", "time", "symbol", "direction",
-            "entry_price", "ORH", "ORL", "prev_close", "suggested_action"
+            "entry_price", "ORH", "ORL", "prev_close"
         ])
         if header:
             w.writeheader()
@@ -104,10 +104,14 @@ def run_and_send(signals):
     logs = []
     for s in signals:
         logs.append({
-            "date": nowd, "time": nowt, "symbol": s["symbol"],
-            "direction": s["signal"], "entry_price": s["close"],
-            "ORH": s["high"], "ORL": s["low"],
-            "prev_close": s["prev_close"], "suggested_action": s.get("suggested_action", "")
+            "date": nowd,
+            "time": nowt,
+            "symbol": s["symbol"],
+            "direction": s["signal"],
+            "entry_price": s["close"],
+            "ORH": s["high"],
+            "ORL": s["low"],
+            "prev_close": s["prev_close"]
         })
     append_backtest(logs)
     if ok:
