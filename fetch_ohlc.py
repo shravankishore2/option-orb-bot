@@ -50,10 +50,10 @@ def get_opening_range(symbol):
         data["Time"] = data["Datetime"].dt.time
 
         # Select only the first 15 minutes (9:15–9:30)
-        mask = (data["Time"] >= time(9, 15)) & (data["Time"] < time(9, 30))
+        mask = (data["Time"] >= time(9, 20)) & (data["Time"] < time(9, 35))
         window = data.loc[mask]
         if window.empty:
-            print(f"⚠️ {symbol}: No 9:15–9:30 data found.")
+            print(f"⚠️ {symbol}: No 9:15–9:35 data found.")
             return None
 
         # ✅ True range: based on all 1-minute highs/lows
@@ -82,7 +82,7 @@ def get_opening_range(symbol):
 
 
 def fetch_all(symbols):
-    """Fetch 9:15–9:30 OHLC for all given symbols."""
+    """Fetch 9:15–9:35 OHLC for all given symbols."""
     results = []
     for sym in symbols:
         row = get_opening_range(sym)

@@ -27,7 +27,7 @@ def get_intraday_move(symbol, trade_date, trade_time, direction, orh, orl):
     if data.empty:
         return None
 
-    # Convert index to IST
+    # index data in ist
     data.index = data.index.tz_convert(IST)
 
     # Keep only after signal time
@@ -39,24 +39,24 @@ def get_intraday_move(symbol, trade_date, trade_time, direction, orh, orl):
     high_after = float(data_after["High"].max())
     low_after = float(data_after["Low"].min())
 
-    # BUY LOGIC
+    # if buy this exectues
     if direction == "BUY":
         if high_after > entry_open:
             exit_price = high_after
         else:
             exit_price = low_after
 
-        # Loss limited by ORL
+        #exit if hits orl
         exit_price = max(exit_price, orl)
 
-    # SELL LOGIC
+    # if its sell this executes
     else:
         if low_after < entry_open:
             exit_price = low_after
         else:
             exit_price = high_after
 
-        # Loss limited by ORH
+        # if hits orh exit
         exit_price = min(exit_price, orh)
 
     return float(exit_price)
@@ -95,7 +95,7 @@ def backtest_intraday(trade_file="backtest_opening_range.csv"):
         if exit_price is None:
             continue
 
-        # PnL calculation
+        # calc pnl for buy/sells
         if direction == "BUY":
             pnl = ((exit_price - entry) / entry) * 100
         else:
@@ -120,7 +120,7 @@ def backtest_intraday(trade_file="backtest_opening_range.csv"):
 
     out = pd.DataFrame(results)
 
-    # ADD cumulative PnL
+    # Cumulative pnl column
     out["Cumulative_PnL"] = out["PnL_%"].cumsum()
 
     out.to_csv("backtest_results_intraday.csv", index=False)
@@ -128,7 +128,7 @@ def backtest_intraday(trade_file="backtest_opening_range.csv"):
     print("✅ Saved: backtest_results_intraday.csv")
     print(out.head())
 
-    # SUMMARY
+    # summaryof the data
     print("\n📈 Backtest Summary:")
     print(f"Trades tested: {len(out)}")
     print(f"Wins: {(out['PnL_%'] > 0).sum()}")
