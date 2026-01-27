@@ -1,4 +1,4 @@
-    # main.py — Opening Range Breakout Strategy with Live 5-Min Update + Backtest Logging
+1    # main.py — Opening Range Breakout Strategy with Live 5-Min Update + Backtest Logging
 
 import os, csv, datetime, pytz, yfinance as yf, pandas as pd, time
 from fetch_symbols import get_symbols
@@ -30,7 +30,7 @@ def load_opening_df():
         try:
             df = pd.read_csv(OPENING_FILE)
             if "date" in df.columns and pd.to_datetime(df["date"].iloc[0]).date() == today:
-                print("✅ Loaded today's Opening Range (9:15–9:30).")
+                print("✅ Loaded today's Opening Range (9:15–9:35).")
                 return df
         except Exception:
             pass
@@ -109,8 +109,8 @@ def run_and_send(signals):
             "symbol": s["symbol"],
             "direction": s["signal"],
             "entry_price": s["close"],
-            "ORH": s["high"],
-            "ORL": s["low"],
+            "ORH": s["ORH"],
+            "ORL": s["ORL"],
             "prev_close": s["prev_close"]
         })
     append_backtest(logs)
