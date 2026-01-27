@@ -21,19 +21,32 @@ def normalize_index_to_ist(data):
     data.index = data.index.tz_convert(IST)
     return data
 
-
-def get_prev_close(symbol):
-    """Fetch previous day's close for the given symbol."""
+def get_prev_day_levels(symbol):
     try:
-        ticker = f"{symbol}.NS"
-        df = yf.download(ticker, period="2d", interval="1d", progress=False)
-        if len(df) >= 2:
-            return float(df["Close"].iloc[-2])
-        elif len(df) == 1:
-            return float(df["Close"].iloc[-1])
-        return None
+        df = yf.download(
+            f"{symbol}.NS",
+            period="7d",
+            interval="1d",
+            auto_adjust=False,
+            progress=False
+        )
+
+        df = df.dropna()
+
+        if len(df) < 2:
+            return None, None, None, None
+
+        prev = df.iloc[-2]
+
+        return (
+            float(prev["Open"]),
+            float(prev["High"]),
+            float(prev["Low"]),
+            float(prev["Close"])
+        )
     except Exception:
-        return None
+        return None, None, None, None
+
 
 
 def get_opening_range(symbol):
@@ -62,20 +75,36 @@ def get_opening_range(symbol):
         l = float(window["Low"].min())   # true low
         c = float(window.iloc[-1]["Close"])
 
-        prev_close = get_prev_close(symbol)
+        prev_open,prev_high,prev_low,prev_close = get_prev_day_levels(symbol)
+        """
+            Fibonacci pivot points from previous session's high, low, close.
+            Returns dict with P, R1-3, S1-3.
+            """
+
+        Pivot = (prev_high + prev_low + prev_close) / 3.0
+        Range = prev_high - prev_low
+
+        r1 = Pivot + 0.382 * Range
+        # r2 = P + 0.618 * R
+        # r3 = P + 1.000 * R
+
+        s1 = Pivot - 0.382 * Range
+        # s2 = P - 0.618 * R
+        # s3 = P - 1.000 * R
 
         print(f"✅ {symbol}: O={o:.2f} H={h:.2f} L={l:.2f} C={c:.2f} PrevClose={prev_close}")
         return {
             "symbol": symbol,
             "open": o,
-            "high": h,
-            "low": l,
+            "ORH": h,
+            "ORL": l,
             "close": c,
             "prev_close": prev_close,
-            "ORH": h,
-            "ORL": l
+            "Pivot": Pivot,
+            "Range": Range,
+            "S1": s1,
+            "R1": r1
         }
-
     except Exception as e:
         print(f"⚠️ Error fetching {symbol}: {e}")
         return None
@@ -86,7 +115,7 @@ def fetch_all(symbols):
     results = []
     for sym in symbols:
         row = get_opening_range(sym)
-        if row:
+        if  row:
             results.append(row)
     return results
 
