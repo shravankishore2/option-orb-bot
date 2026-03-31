@@ -1,11 +1,10 @@
-1    # main.py — Opening Range Breakout Strategy with Live 5-Min Update + Backtest Logging
+# main.py — Opening Range Breakout Strategy with Live 5-Min Update + Backtest Logging
 
 import os, csv, datetime, pytz, yfinance as yf, pandas as pd, time
 from fetch_symbols import get_symbols
 from fetch_ohlc import fetch_all     # returns opening 9:15–9:30 data
 from signal_generator import generate_option_signals
 from notifier import load_config, format_and_send
-
 print("🧠 Running latest version of main.py...")
 
 IST = pytz.timezone("Asia/Kolkata")
@@ -13,7 +12,7 @@ OPENING_FILE = "opening_15min_ohlc.csv"
 SENT_FILE = "sent_notifications.csv"
 BACKTEST_FILE = "backtest_opening_range.csv"
 
-
+6
 # ---------- helpers ----------
 def now_time_str():
     return datetime.datetime.now(IST).strftime("%H:%M:%S")
