@@ -8,34 +8,12 @@ IST = pytz.timezone("Asia/Kolkata")
 
 
 # ---------------------------------------------------
-# TRAILING STOP EXIT LOGIC
+# TRAILING STOP EXIT LOGIC (FIXED VERSION)
 # ---------------------------------------------------
 def get_trailing_stop_exit(symbol, trade_date, trade_time, direction, entry, orh, orl):
-    """
-    Trailing stop exit logic.
 
-    Stop logic (NEW):
-    ─────────────────────────────────────────────────
-    BUY:  Hard stop = ORH
-          If price falls back below ORH, breakout has
-          failed → exit immediately with small loss.
-          Trailing stop then moves UP as price rises,
-          always 2% below the highest high seen.
-
-    SELL: Hard stop = ORL
-          If price rises back above ORL, breakdown has
-          failed → exit immediately with small loss.
-          Trailing stop moves DOWN as price falls,
-          always 2% above the lowest low seen.
-
-    Additional exits:
-      → 3:15 PM: close the trade regardless
-    ─────────────────────────────────────────────────
-    Returns: (exit_price, exit_reason)
-    """
-
-    date_str    = pd.to_datetime(trade_date).strftime("%Y-%m-%d")
-    next_day    = pd.to_datetime(trade_date) + pd.Timedelta(days=1)
+    date_str = pd.to_datetime(trade_date).strftime("%Y-%m-%d")
+    next_day = pd.to_datetime(trade_date) + pd.Timedelta(days=1)
 
     try:
         data = yf.download(
@@ -57,111 +35,135 @@ def get_trailing_stop_exit(symbol, trade_date, trade_time, direction, entry, orh
     except Exception:
         return None, None, None, None
 
-    # Day high and low across the full session
-    day_high = round(float(data["High"].max()), 2)
-    day_low  = round(float(data["Low"].min()), 2)
-
-    # Only candles AFTER signal time
     data_after = data[data.index.time >= trade_time]
 
     if data_after.empty:
         return None, None, None, None
 
-    orb_range  = orh - orl
-    exit_time  = pd.Timestamp("15:15:00").time()
+    orb_range = orh - orl
+    exit_time = pd.Timestamp("15:15:00").time()
 
-    # ── Minimum ORB range filter ──────────────────────
-    # If ORB range is less than 0.5% of entry price,
-    # the setup has no momentum — skip it entirely
+    # ORB narrow filter
     orb_range_pct = (orb_range / entry) * 100
     if orb_range_pct < 0.5:
         return None, "ORB Too Narrow", None, None
 
-    # ── Fixed trail: always 2% behind highest price ──
-    # Consistent across all stocks regardless of ORB size
-    trail_pct = 0.02
+    orb_range = orh - orl
 
-    # ─── BUY ───────────────────────────────────────
+    if direction == "BUY":
+        midpoint = entry + orb_range / 2
+    else:
+        midpoint = entry - orb_range / 2
+
+
+    # ---------------------------------------------------
+    # BUY TRADE
+    # ---------------------------------------------------
     if direction == "BUY":
 
-        # Hard floor: ORH — if price falls back below the
-        # breakout level, the trade idea is invalidated.
-        # Much tighter than ORL, minimises losses.
-        initial_stop   = orh
-        trailing_stop  = initial_stop
-        highest_high   = entry          # tracks best price seen
+        highest_high = entry
 
         for idx, candle in data_after.iterrows():
+
             candle_time = idx.time()
-            high        = float(candle["High"])
-            low         = float(candle["Low"])
-            close       = float(candle["Close"])
+            high = float(candle["High"])
+            low = float(candle["Low"])
+            close = float(candle["Close"])
 
-            # ── Step 1: update trailing stop if price moved up ──
             if high > highest_high:
-                highest_high  = high
-                new_stop      = highest_high * (1 - trail_pct)
+                highest_high = high
 
-                # Trailing stop only ever moves UP, never down
-                # And never below the hard floor (ORH)
-                trailing_stop = max(trailing_stop, new_stop, initial_stop)
+            trailing_stop = highest_high - ((highest_high - orh) * 0.10)
 
-            # ── Step 2: check if this candle hits the stop ──
-            effective_stop = max(trailing_stop, initial_stop)
+            exit_candidates = []
 
-            if low <= effective_stop:
-                return round(effective_stop, 2), "Trailing Stop", day_high, day_low
+            if midpoint > entry and high >= midpoint:
+                exit_candidates.append(("Target (Midpoint)", midpoint))
 
-            # ── Step 3: time exit ──
+            if low <= trailing_stop:
+                exit_candidates.append(("Trailing Stop", trailing_stop))
+
             if candle_time >= exit_time:
-                return round(close, 2), "EOD 3:15 PM", day_high, day_low
+                exit_candidates.append(("EOD 3:15 PM", close))
 
-        return round(float(data_after["Close"].iloc[-1]), 2), "Last Candle", day_high, day_low
+            if exit_candidates:
 
-    # ─── SELL ──────────────────────────────────────
+                reason, exit_price = max(
+                    exit_candidates,
+                    key=lambda x: x[1]
+                )
+
+                day_high = round(highest_high, 2)
+                day_low = round(float(data_after["Low"].min()), 2)
+
+                return round(exit_price, 2), reason, day_high, day_low
+
+        return (
+            round(float(data_after["Close"].iloc[-1]), 2),
+            "Last Candle",
+            round(highest_high, 2),
+            round(float(data_after["Low"].min()), 2)
+        )
+
+
+    # ---------------------------------------------------
+    # SELL TRADE
+    # ---------------------------------------------------
     else:
 
-        # Hard floor: ORL — if price rises back above the
-        # breakdown level, the trade idea is invalidated.
-        initial_stop   = orl
-        trailing_stop  = initial_stop
-        lowest_low     = entry          # tracks best price seen (going down)
+        lowest_low = entry
 
         for idx, candle in data_after.iterrows():
+
             candle_time = idx.time()
-            high        = float(candle["High"])
-            low         = float(candle["Low"])
-            close       = float(candle["Close"])
+            high = float(candle["High"])
+            low = float(candle["Low"])
+            close = float(candle["Close"])
 
-            # ── Step 1: update trailing stop if price moved down ──
             if low < lowest_low:
-                lowest_low    = low
-                new_stop      = lowest_low * (1 + trail_pct)
+                lowest_low = low
 
-                # Trailing stop only ever moves DOWN, never up
-                # And never above the hard floor (ORL)
-                trailing_stop = min(trailing_stop, new_stop, initial_stop)
+            trailing_stop = lowest_low + ((orl - lowest_low) * 0.10)
 
-            # ── Step 2: check stop ──
-            effective_stop = min(trailing_stop, initial_stop)
+            exit_candidates = []
 
-            if high >= effective_stop:
-                return round(effective_stop, 2), "Trailing Stop", day_high, day_low
+            if midpoint < entry and low <= midpoint:
+                exit_candidates.append(("Target (Midpoint)", midpoint))
 
-            # ── Step 3: time exit ──
+            if high >= trailing_stop:
+                exit_candidates.append(("Trailing Stop", trailing_stop))
+
             if candle_time >= exit_time:
-                return round(close, 2), "EOD 3:15 PM", day_high, day_low
+                exit_candidates.append(("EOD 3:15 PM", close))
 
-        return round(float(data_after["Close"].iloc[-1]), 2), "Last Candle", day_high, day_low
+            if exit_candidates:
+
+                reason, exit_price = min(
+                    exit_candidates,
+                    key=lambda x: x[1]
+                )
+
+                day_high = round(float(data_after["High"].max()), 2)
+                day_low = round(lowest_low, 2)
+
+                return round(exit_price, 2), reason, day_high, day_low
+
+        return (
+            round(float(data_after["Close"].iloc[-1]), 2),
+            "Last Candle",
+            round(float(data_after["High"].max()), 2),
+            round(lowest_low, 2)
+        )
 
 
 # ---------------------------------------------------
-# MAIN BACKTEST
+# MAIN BACKTEST ENGINE
 # ---------------------------------------------------
 def backtest_intraday(
-    input_file="backtest_opening_range.csv",
-    output_file="backtest_results_intraday.csv"
+        input_file="backtest_opening_range.csv",
+        output_file="backtest_results_intraday.csv"
 ):
+
     if not os.path.exists(input_file):
         print(f"❌ File not found: {input_file}")
         return
@@ -172,11 +174,19 @@ def backtest_intraday(
         print("❌ No trades found in CSV")
         return
 
-    # Normalize column names
     df.columns = [c.strip().lower() for c in df.columns]
 
-    required_cols = ["date", "time", "symbol", "direction",
-                     "entry_price", "orh", "orl", "prev_close"]
+    required_cols = [
+        "date",
+        "time",
+        "symbol",
+        "direction",
+        "entry_price",
+        "orh",
+        "orl",
+        "prev_close"
+    ]
+
     missing = [c for c in required_cols if c not in df.columns]
 
     if missing:
@@ -184,133 +194,170 @@ def backtest_intraday(
         return
 
     df["date"] = pd.to_datetime(df["date"])
-    df["time"] = pd.to_datetime(df["time"], format="%H:%M:%S").dt.time
+    df["time"] = pd.to_datetime(
+        df["time"],
+        format="%H:%M:%S"
+    ).dt.time
 
-    # yfinance 2-month limit
     cutoff = pd.Timestamp.today() - pd.Timedelta(days=55)
-    df     = df[df["date"] >= cutoff]
+    df = df[df["date"] >= cutoff]
 
     if df.empty:
         print("❌ No trades within yfinance 2-month data limit")
         return
 
-    # ── Hard ORB time filter ──────────────────────────
-    # ORB signals are only valid in the first hour after
-    # opening range forms. Anything after 10:30 AM is
-    # not an ORB trade — it's just afternoon chop.
-    orb_cutoff = pd.Timestamp("15:00:00").time()
-    before     = len(df)
-    df         = df[df["time"] <= orb_cutoff]
-    dropped    = before - len(df)
+
+    # ORB time filter
+    orb_cutoff = pd.Timestamp("10:30:00").time()
+
+    before = len(df)
+    df = df[df["time"] <= orb_cutoff]
+
+    dropped = before - len(df)
 
     if dropped > 0:
-        print(f"⏰ Dropped {dropped} signals fired after 10:30 AM (not valid ORB trades)")
+        print(f"⏰ Dropped {dropped} signals fired after 10:30 AM")
 
-    if df.empty:
-        print("❌ No trades within valid ORB window (9:30 – 10:30 AM)")
-        return
 
-    print(f"📊 Processing {len(df)} trades with trailing stop logic...\n")
+    print(f"\n📊 Processing {len(df)} trades...\n")
 
-    results        = []
-    processed      = 0
+    results = []
+    processed = 0
     skipped_narrow = 0
+
 
     for _, row in df.iterrows():
 
-        symbol      = str(row["symbol"]).strip().upper()
-        direction   = str(row["direction"]).strip().upper()
-        entry       = float(row["entry_price"])
-        orh         = float(row["orh"])
-        orl         = float(row["orl"])
-        prev_close  = float(row["prev_close"])
-        trade_date  = row["date"]
-        trade_time  = row["time"]
+        symbol = str(row["symbol"]).upper().strip()
+        direction = str(row["direction"]).upper().strip()
 
-        exit_price, exit_reason, day_high, day_low = get_trailing_stop_exit(
-            symbol     = symbol,
-            trade_date = trade_date,
-            trade_time = trade_time,
-            direction  = direction,
-            entry      = entry,
-            orh        = orh,
-            orl        = orl
-        )
+        entry = float(row["entry_price"])
+        orh = float(row["orh"])
+        orl = float(row["orl"])
+        prev_close = float(row["prev_close"])
+
+        trade_date = row["date"]
+        trade_time = row["time"]
+
+        exit_price, exit_reason, day_high, day_low = \
+            get_trailing_stop_exit(
+                symbol,
+                trade_date,
+                trade_time,
+                direction,
+                entry,
+                orh,
+                orl
+            )
 
         if exit_price is None:
+
             if exit_reason == "ORB Too Narrow":
-                print(f"⏭️  Skipped (ORB too narrow): {symbol} {trade_date.date()}")
                 skipped_narrow += 1
             else:
-                print(f"⚠️  No data: {symbol} {trade_date.date()} — skipping")
+                print(f"⚠️ Missing data: {symbol}")
+
             continue
 
-        # PnL
+
         if direction == "BUY":
             pnl = ((exit_price - entry) / entry) * 100
         else:
             pnl = ((entry - exit_price) / entry) * 100
 
         result = "WIN" if pnl > 0 else "LOSS"
+
         processed += 1
 
         print(
-            f"{'✅' if result == 'WIN' else '❌'} "
-            f"{processed}/{len(df)} | {symbol} {direction} {trade_date.date()} | "
-            f"Entry ₹{entry} → Exit ₹{exit_price} | "
-            f"{exit_reason} | {result} ({pnl:+.2f}%)"
+            f"{'✅' if result=='WIN' else '❌'} "
+            f"{processed}/{len(df)} | "
+            f"{symbol} {direction} | "
+            f"{trade_date.date()} | "
+            f"{exit_reason} | "
+            f"{pnl:+.2f}%"
         )
 
+
         results.append({
-            "date":        trade_date.date(),
-            "time":        trade_time,
-            "symbol":      symbol,
-            "direction":   direction,
-            "result":      result,
-            "entry":       round(entry, 2),
-            "orh":         round(orh, 2),
-            "orl":         round(orl, 2),
-            "prev_close":  round(prev_close, 2),
-            "day_high":    day_high,
-            "day_low":     day_low,
-            "exitprice":   round(exit_price, 2),
+
+            "date": trade_date.date(),
+            "time": trade_time,
+            "symbol": symbol,
+            "direction": direction,
+            "result": result,
+
+            "entry_price": round(entry, 2),
+            "orh": round(orh, 2),
+            "orl": round(orl, 2),
+
+            "prev_close": round(prev_close, 2),
+
+            "day_high": day_high,
+            "day_low": day_low,
+
+            "exit_price": round(exit_price, 2),
+
             "exit_reason": exit_reason,
-            "PnL":         round(pnl, 2)
+
+            "PnL_%": round(pnl, 2)
+
         })
 
-        time.sleep(0.3)
+        time.sleep(0.25)
+
 
     if not results:
-        print("\n❌ No trades processed successfully")
+        print("❌ No trades processed")
         return
 
+
     out = pd.DataFrame(results)
-    out["cumulative_pnl"] = out["PnL"].cumsum()
+
+    capital = 100
+
+    equity_curve = []
+
+    for pnl in out["PnL_%"]:
+        capital *= (1 + pnl / 100)
+        equity_curve.append(capital)
+
+    out["equity_curve"] = equity_curve
+    out["cumulative_pnl"] = out["equity_curve"] - 100
 
     out.to_csv(output_file, index=False)
 
+
     print(f"\n✅ Saved → {output_file}")
-    print("\n" + "=" * 60)
-    print("📈 BACKTEST SUMMARY")
-    print("=" * 60)
-    print(f"Total Signals:        {len(df) + dropped}")
-    print(f"Dropped (after 10:30):{dropped}")
-    print(f"Skipped (ORB narrow): {skipped_narrow}")
-    print(f"Trades Executed:      {len(out)}")
-    print(f"Wins:                 {(out['PnL'] > 0).sum()}")
-    print(f"Losses:               {(out['PnL'] < 0).sum()}")
-    print(f"Win Rate:             {(out['PnL'] > 0).mean() * 100:.2f}%")
-    print(f"Avg PnL per Trade:    {out['PnL'].mean():.2f}%")
-    print(f"Best Trade:           {out['PnL'].max():.2f}%")
-    print(f"Worst Trade:          {out['PnL'].min():.2f}%")
-    print(f"Total Cumulative PnL: {out['cumulative_pnl'].iloc[-1]:.2f}%")
-    print("=" * 60)
 
-    print("\n📊 Exit Reason Breakdown:")
-    print(out["exit_reason"].value_counts().to_string())
+    print("\n📈 BACKTEST SUMMARY")
 
-    print("\n📋 Sample Trades:")
-    print(out.head(10).to_string(index=False))
+    print(f"Total Signals: {before}")
+    print(f"Dropped After 10:30: {dropped}")
+    print(f"Skipped Narrow ORB: {skipped_narrow}")
+    print(f"Trades Executed: {len(out)}")
+
+    print(f"Wins: {(out['PnL_%']>0).sum()}")
+    print(f"Losses: {(out['PnL_%']<0).sum()}")
+
+    print(f"Win Rate: {(out['PnL_%']>0).mean()*100:.2f}%")
+
+    print(f"Average Trade: {out['PnL_%'].mean():.2f}%")
+
+    print(f"Best Trade: {out['PnL_%'].max():.2f}%")
+
+    print(f"Worst Trade: {out['PnL_%'].min():.2f}%")
+
+    print(
+        f"Total Cumulative PnL: "
+        f"{out['cumulative_pnl'].iloc[-1]:.2f}%"
+    )
+
+
+    print("\n📊 Exit Breakdown:")
+
+    print(out["exit_reason"].value_counts())
+
 
     return out
 
