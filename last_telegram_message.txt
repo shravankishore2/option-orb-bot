@@ -1,8 +1,0 @@
-📊 *Opening Range Strategy (9:20–9:35)*
-📅 30-Mar-2026 | 🕒 12:31
-
-🔴 *2% Below PDC*
-• FEDERALBNK | SELL CMP:261.70, PDC:269.30, ORH:264.05, ORL:262.20, Lot:5000
-• TATACONSUM | SELL CMP:1026.50, PDC:1048.50, ORH:1039.60, ORL:1029.30, Lot:550
-
-— Automated by Shravan 📈
