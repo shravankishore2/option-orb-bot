@@ -1,0 +1,8 @@
+config.ini
+backtest_opening_range.py
+backtest_results_intraday.csv
+backtest_opening_range.csv
+backtest_results_OLD.csv
+last_telegram_message.txt
+sent_notifications.csv
+equity_curve_intraday.png
