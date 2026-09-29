@@ -29,6 +29,8 @@ Credentials: `config.ini` (git-ignored; template `config.example.ini`). Telegram
 
 **Signals only.** `dhan_client.ALLOWED_PATH_PREFIXES` (`/charts/`, `/marketfeed/`) is an allowlist enforced in `_post` and in the HTTP session; `tests/test_signals_only.py` fails on any order endpoint. Never add a trading endpoint or broker SDK call.
 
+**Dashboard login.** `auth.py` (same scheme as QuantRadar's): password from `ORBITAL_DASHBOARD_PASSWORD[_FILE]`; none set = open (local use), `ORBITAL_REQUIRE_LOGIN=1` refuses to start without one. `webapp.require_login` guards every endpoint except those in `OPEN_ENDPOINTS`.
+
 **The repo is public.** Never commit `config.ini`, tokens, `data/`, logs, or trade/signal CSVs (see `.gitignore`). Aggregate results (`docs/RESULTS.md`, `docs/summary.json`) are fine. A Telegram token leaked here once (2025) and history had to be rewritten.
 
 ## Architecture

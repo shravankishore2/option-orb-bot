@@ -1,11 +1,7 @@
-# Append to /etc/caddy/Caddyfile (same header block as the other sites). The hash comes
-# from `caddy hash-password`; the plain password lives only in ~/.orbital_web_password
-# (mode 600) on the VM.
+# Append to /etc/caddy/Caddyfile (same header block as the other sites). No basic_auth:
+# the dashboard has its own password page and session cookie (auth.py), like QuantRadar.
 orbital.68-233-96-25.sslip.io {
 	encode gzip
-	basic_auth {
-		orbital <bcrypt hash>
-	}
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Robots-Tag "noindex, nofollow"

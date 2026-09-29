@@ -27,6 +27,11 @@
             </div>
             <div class="meta-card"><span>AS OF</span><strong>{{ today }}</strong></div>
             <div class="meta-card"><span>UPDATED</span><strong>{{ updated_at }}</strong></div>
+            {% if login_enabled %}
+            <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+                <button class="logout-btn" type="submit">Log out</button>
+            </form>
+            {% endif %}
         </div>
     </header>
 

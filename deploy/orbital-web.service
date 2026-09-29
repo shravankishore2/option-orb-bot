@@ -1,5 +1,6 @@
 # /etc/systemd/system/orbital-web.service — ORBITAL dashboard (reads CSV/JSON only; never
-# calls the broker). Localhost only; Caddy adds HTTPS and the password in front of it.
+# calls the broker). Localhost only; Caddy adds HTTPS. Login is the dashboard's own password
+# page (auth.py); the password lives only in ~/.orbital_web_password (mode 600).
 [Unit]
 Description=ORBITAL dashboard
 After=network-online.target
@@ -11,6 +12,9 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/orbital
 Environment=TZ=Asia/Kolkata
+Environment=ORBITAL_DASHBOARD_PASSWORD_FILE=/home/ubuntu/.orbital_web_password
+# refuse to start without a password rather than serve the dashboard open
+Environment=ORBITAL_REQUIRE_LOGIN=1
 ExecStart=/home/ubuntu/orbital/.venv/bin/waitress-serve --listen=127.0.0.1:5050 --threads=2 webapp:app
 Restart=always
 RestartSec=5

@@ -833,3 +833,20 @@ tr.highlight td { background: rgba(32, 228, 134, 0.06); font-weight: 700; }
     .figure-grid { grid-template-columns: 1fr; }
     .toggle { margin-left: 0; }
 }
+
+/* Log out (shown only when the dashboard has a password) */
+.logout-form { margin: 0; }
+.logout-btn {
+    min-height: 42px;
+    border: 1px solid var(--border);
+    background: rgba(13, 22, 38, 0.85);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.logout-btn:hover { border-color: var(--muted, #8fa3c0); }
+.logout-btn:focus-visible { outline: 2px solid #4f8cff; outline-offset: 2px; }

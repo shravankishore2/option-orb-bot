@@ -136,7 +136,7 @@ On a small VM, alongside another service that shares the Dhan account
 |---|---|
 | `orbital.timer` → `orbital.service` | 09:15 IST on NSE trading days (holiday calendar via `ExecCondition`); `main.py --session`; restarts on failure; memory-capped |
 | `orbital-web.service` | Dashboard under waitress on 127.0.0.1:5050, always on |
-| `Caddyfile.orbital` | HTTPS and a password in front of the dashboard |
+| `Caddyfile.orbital` | HTTPS in front of the dashboard; the dashboard has its own password page (`auth.py`: signed HttpOnly session cookie, lockout after 5 wrong tries) |
 
 Dhan's 5 requests/s limit is per account, so on a shared account ORBITAL runs
 at 3/s (`rate_per_sec`) and stays silent around each minute boundary
@@ -164,7 +164,7 @@ at 3/s (`rate_per_sec`) and stays silent around each minute boundary
 | **Live** | `live_engine.py` | Decision engine (completed candles → rules → features → model) |
 | | `main.py` | The bot: 5-minute loop, Telegram, logs (`--session` for the systemd timer) |
 | | `notifier.py` | Telegram messages and the sent log |
-| | `webapp.py`, `charts.py`, `templates/`, `static/` | Dashboard |
+| | `webapp.py`, `auth.py`, `charts.py`, `templates/`, `static/` | Dashboard and its login |
 | **v1 research** | `train_classifier.py`, `experiments.py`, `sweep_exits.py` | The September 2026 exploration (label choice, exit sweep) on `data/research/v1/` |
 | **Tests** | `tests/` | Rules, no-lookahead, live/backtest parity, exits, stats, plumbing, signals-only guard, real-data regression |
 | **Deploy** | `deploy/`, `config.example.ini` | systemd units, Caddy site, logrotate; config template |

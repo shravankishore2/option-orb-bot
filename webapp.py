@@ -10,6 +10,10 @@
 #   ORBITAL_PORT=8080 python webapp.py another port
 #   ORBITAL_DEBUG=1 python webapp.py   Flask debugger on (local use only)
 #   waitress-serve --listen=127.0.0.1:5050 webapp:app   production (the VM, behind Caddy)
+#
+# Login (auth.py): set ORBITAL_DASHBOARD_PASSWORD or ORBITAL_DASHBOARD_PASSWORD_FILE
+# and every page needs the password. With neither set the dashboard is open, for
+# local use; ORBITAL_REQUIRE_LOGIN=1 (the VM) refuses to start that way.
 
 import datetime as dt
 import hashlib
@@ -18,12 +22,128 @@ import os
 import re
 
 import pandas as pd
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, Response, jsonify, render_template, request, redirect, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 
+import auth
 import charts
 import strategy_config as C
 
 app = Flask(__name__)
+# Caddy terminates HTTPS and says so in X-Forwarded-Proto; trust one hop so
+# request.is_secure is true and the session cookie gets the Secure flag.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+# ---------------------------------------------------------------------------
+# LOGIN — password only, signed session cookie (same scheme as QuantRadar)
+# ---------------------------------------------------------------------------
+
+SESSION_HOURS = 12
+PASSWORD = auth.configured_password()
+if not PASSWORD and os.getenv("ORBITAL_REQUIRE_LOGIN") == "1":
+    raise SystemExit("ORBITAL_REQUIRE_LOGIN=1 but no dashboard password is configured")
+_secret = os.getenv("ORBITAL_DASHBOARD_SECRET")
+SIGNER = auth.SessionSigner(_secret.encode() if _secret else None, ttl_s=SESSION_HOURS * 3600)
+CHECKER = auth.PasswordCheck(PASSWORD) if PASSWORD else None
+OPEN_ENDPOINTS = {"login_page", "login_form", "api_login", "logout", "api_logout", "healthz"}
+
+
+def logged_in():
+    return CHECKER is None or SIGNER.valid(request.cookies.get(auth.COOKIE))
+
+
+def safe_next(target):
+    """Only same-site paths — never an open redirect."""
+    return target if target and target.startswith("/") and not target.startswith("//") \
+        and "\\" not in target else url_for("live")
+
+
+@app.before_request
+def require_login():
+    if request.endpoint in OPEN_ENDPOINTS or logged_in():
+        return None
+    return redirect(url_for("login_page", next=request.full_path.rstrip("?")))
+
+
+@app.after_request
+def security_headers(resp):
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers.setdefault("Cache-Control", "no-store")
+    return resp
+
+
+def _try_password(password):
+    """(ok, error message, retry_after) — QuantRadar's wording."""
+    wait = CHECKER.locked_for()
+    if wait > 0:
+        return False, f"Too many attempts. Try again in {round(wait)} s.", wait
+    if not CHECKER.check(password):
+        wait = CHECKER.locked_for()     # this failure may have been the fifth
+        if wait > 0:
+            return False, f"Too many attempts. Try again in {round(wait)} s.", wait
+        return False, "Wrong password.", 0
+    return True, "", 0
+
+
+def _set_session(resp):
+    resp.set_cookie(auth.COOKIE, SIGNER.issue(), max_age=SESSION_HOURS * 3600, httponly=True,
+                    samesite="Strict", secure=request.is_secure, path="/")
+    return resp
+
+
+@app.get("/login")
+def login_page():
+    if logged_in():
+        return redirect(safe_next(request.args.get("next")))
+    return render_template("login.html", next_url=safe_next(request.args.get("next")), error="")
+
+
+@app.post("/login")
+def login_form():
+    """No-JavaScript fallback for the login form."""
+    if CHECKER is None:
+        return redirect(url_for("live"))
+    ok, error, _ = _try_password(request.form.get("password", ""))
+    nxt = safe_next(request.form.get("next"))
+    if ok:
+        return _set_session(redirect(nxt, code=303))
+    return render_template("login.html", next_url=nxt, error=error), 401
+
+
+@app.post("/api/login")
+def api_login():
+    if CHECKER is None:
+        return Response(status=204)
+    body = request.get_json(silent=True) or {}
+    ok, error, wait = _try_password(str(body.get("password", "")))
+    if ok:
+        return _set_session(Response(status=204))
+    if wait:
+        return jsonify(error="too many attempts", retry_after=round(wait)), 429, \
+            {"Retry-After": str(int(wait) + 1)}
+    return jsonify(error="wrong password"), 401
+
+
+@app.post("/api/logout")
+def api_logout():
+    resp = Response(status=204)
+    resp.delete_cookie(auth.COOKIE, path="/", secure=request.is_secure, httponly=True, samesite="Strict")
+    return resp
+
+
+@app.post("/logout")
+def logout():
+    resp = redirect(url_for("login_page"), code=303)
+    resp.delete_cookie(auth.COOKIE, path="/", secure=request.is_secure, httponly=True, samesite="Strict")
+    return resp
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SENT_FILE = os.path.join(BASE_DIR, "sent_notifications.csv")
@@ -352,7 +472,7 @@ def render(tab, **kw):
         "dashboard.html", active_tab=tab, today=now.date().isoformat(),
         updated_at=now.strftime("%H:%M:%S"), status=status, status_css=status_css,
         heartbeat=beat.strftime("%H:%M") if beat else None, heartbeat_stale=stale,
-        model=model_info(), time_filters=TIME_FILTERS, **kw)
+        model=model_info(), time_filters=TIME_FILTERS, login_enabled=CHECKER is not None, **kw)
 
 
 @app.route("/")
