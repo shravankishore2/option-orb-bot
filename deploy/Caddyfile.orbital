@@ -1,0 +1,16 @@
+# Append to /etc/caddy/Caddyfile. The hash comes from `caddy hash-password`;
+# the plain password lives only in ~/orbital/.web_password (mode 600) on the VM.
+orbital.68-233-96-25.sslip.io {
+	encode gzip
+	basic_auth {
+		orbital <bcrypt hash>
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		-Server
+	}
+	reverse_proxy 127.0.0.1:5050
+}

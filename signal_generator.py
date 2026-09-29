@@ -1,52 +1,55 @@
-# signal_generator.py — generates option signals based on ORB breakout + 2% move
+# signal_generator.py — the ORB entry rules (shared by the live bot and the replay)
+#
+# BUY  when close breaks above the opening-range high, has moved at least
+#      +1.8% from the previous close, and clears the Fibonacci R1 pivot.
+# SELL is the mirror image (below ORL, -1.8%, below S1).
+# Every threshold lives in strategy_config.py.
 
-def generate_option_signals(rows):
+import strategy_config as C
+
+
+def evaluate(close, orh, orl, prev_close, r1, s1):
+    """Return 'BUY', 'SELL' or None for one observed price."""
+    if not prev_close or prev_close <= 0 or r1 is None or s1 is None:
+        return None
+
+    if (close >= orh * (1 + C.BREAKOUT_BUFFER)
+            and close >= prev_close * (1 + C.PREV_CLOSE_MOVE)
+            and close >= r1):
+        return "BUY"
+
+    if (close <= orl * (1 - C.BREAKOUT_BUFFER)
+            and close <= prev_close * (1 - C.PREV_CLOSE_MOVE)
+            and close <= s1):
+        return "SELL"
+
+    return None
+
+
+def generate_option_signals(rows, verbose=True):
     """
-    Generate BUY/SELL signals based on:
-    - Opening Range Breakout (close > ORH or close < ORL)
-    - AND at least 2% move from the previous day's close.
+    Apply the rules to many rows (dicts with symbol, open, ORH, ORL, close,
+    prev_close, R1, S1). verbose=False silences the near-miss debug output —
+    used by the historical replay, which evaluates this millions of times.
     """
     signals = []
 
     for r in rows:
         symbol = r["symbol"]
-        o = r["open"]
-        orh = r["ORH"]
-        orl= r["ORL"]
-        close = r["close"]
+        orh, orl, close = r["ORH"], r["ORL"], r["close"]
         prev = r.get("prev_close")
-        pivot=r.get("pivot")
-        r1=r.get("R1")
-        s1=r.get("S1")
+        pivot = r.get("Pivot", r.get("pivot"))
+        r1, s1 = r.get("R1"), r.get("S1")
 
-        if not prev or prev == 0:
-            continue  # skip if prev close missing
-
-        direction = None
-
-        # 🟢 BUY condition: breakout above ORH AND +2% from prev close
-        if (close >= orh * 1.001) and (close >= prev * 1.018) and (close>=r1):  # small tolerance for rounding
-            direction = "BUY"
-
-        # 🔴 SELL condition: breakdown below ORL AND -2% from prev close
-        elif (close <= orl * 0.999) and (close <= prev * 0.982) and (close<=s1):
-            direction = "SELL"
+        direction = evaluate(close, orh, orl, prev, r1, s1)
 
         if direction:
             signals.append({
-                "symbol": symbol,
-                "open": o,
-                "ORH": orh,
-                "ORL": orl,
-                "close": close,
-                "prev_close": prev,
-                "signal": direction,
-                "pivot":pivot,
-                "R1": r1,
-                "S1": s1,
+                "symbol": symbol, "open": r.get("open"), "ORH": orh, "ORL": orl,
+                "close": close, "prev_close": prev, "signal": direction,
+                "pivot": pivot, "R1": r1, "S1": s1,
             })
-        else:
-            # 🔍 Debug: helps identify near-miss conditions
+        elif verbose and prev:
             diff_from_orh = round((close - orh) / orh * 100, 2)
             diff_from_prev = round((close - prev) / prev * 100, 2)
             if abs(diff_from_orh) < 1.5 or abs(diff_from_prev) < 2.5:

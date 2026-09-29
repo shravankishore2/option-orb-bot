@@ -1,124 +1,333 @@
-# notifier.py — Send Telegram alerts for ORB signals
-
-import requests
-from datetime import datetime
+import os
 import configparser
+import requests
 import pandas as pd
+from datetime import datetime as _datetime, timedelta, timezone
 
-# Load lot sizes once
-lots = pd.read_csv("Lot_size.csv")
-
-
-def get_lot_size(symbol):
-    row = lots.loc[lots["Symbol"] == symbol, "lot_size"]
-    return int(row.iloc[0]) if not row.empty else "N/A"
+# Always Indian time: the bot may run on a machine (or CI runner) set to UTC,
+# and "today" must roll over at IST midnight, not the server's.
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
-def format_message(signals):
-    """Formats Telegram message from signals list."""
-
-    if not signals:
-        return "📊 *Opening Range Strategy (9:20–9:35)*\n\nNo trading signals today."
-
-    buy_signals = [s for s in signals if s.get("signal") == "BUY"]
-    sell_signals = [s for s in signals if s.get("signal") == "SELL"]
-
-    msg = [
-        "📊 *Opening Range Strategy (9:20–9:35)*",
-        f"📅 {datetime.now().strftime('%d-%b-%Y')} | 🕒 {datetime.now().strftime('%H:%M')}\n",
-    ]
-
-    # BUY SECTION
-    if buy_signals:
-        msg.append("🟢 *2% Above PDC*")
-        for s in buy_signals:
-            msg.append(
-                f"• {s.get('symbol')} | {s.get('signal')} "
-                f"CMP:{s.get('close'):.2f}, "
-                f"PDC:{s.get('prev_close'):.2f}, "
-                f"ORH:{s.get('ORH'):.2f}, "
-                f"ORL:{s.get('ORL'):.2f}, "
-                f"Lot:{get_lot_size(s.get('symbol'))}"
-            )
-        msg.append("")
-
-    # SELL SECTION
-    if sell_signals:
-        msg.append("🔴 *2% Below PDC*")
-        for s in sell_signals:
-            msg.append(
-                f"• {s.get('symbol')} | {s.get('signal')} "
-                f"CMP:{s.get('close'):.2f}, "
-                f"PDC:{s.get('prev_close'):.2f}, "
-                f"ORH:{s.get('ORH'):.2f}, "
-                f"ORL:{s.get('ORL'):.2f}, "
-                f"Lot:{get_lot_size(s.get('symbol'))}"
-            )
-        msg.append("")
-
-    msg.append("— Automated by Shravan 📈")
-
-    return "\n".join(msg)
+class datetime:
+    @staticmethod
+    def now():
+        return _datetime.now(IST)
 
 
-def send_telegram_message(token, chat_id, text):
-    """Send Telegram message."""
-    try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            timeout=10,
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+CONFIG_FILE = os.path.join(BASE_DIR, "config.ini")
+SENT_NOTIFICATIONS_FILE = os.path.join(BASE_DIR, "sent_notifications.csv")
+
+SENT_COLUMNS = [
+    "date",
+    "time",
+    "symbol",
+    "direction",
+    "entry_price",
+    "current_price",
+    "close",
+    "prev_close",
+    "orh",
+    "orl",
+    "lot_size",
+    "status",
+]
+
+
+def load_telegram_config():
+    # Environment first (GitHub Actions secrets), then config.ini (local).
+    env_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    env_chat = os.getenv("TELEGRAM_CHAT_ID")
+    if env_token and env_chat:
+        return env_token.strip(), env_chat.strip()
+
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE)
+
+    if "telegram" in config:
+        section = config["telegram"]
+    else:
+        section = config["DEFAULT"]
+
+    bot_token = (
+        section.get("telegram_bot_token")
+        or section.get("telegram_token")
+        or section.get("bot_token")
+    )
+
+    chat_id = (
+        section.get("telegram_chat_id")
+        or section.get("chat_id")
+    )
+
+    if not bot_token:
+        raise ValueError(
+            "Telegram token missing in config.ini. Expected telegram_token or telegram_bot_token"
         )
-        if r.status_code == 200:
-            print("✅ Telegram message sent.")
-            return True
-        print(f"⚠️ Telegram API error: {r.text}")
-        return False
+
+    if not chat_id:
+        raise ValueError(
+            "Telegram chat ID missing in config.ini. Expected telegram_chat_id or chat_id"
+        )
+
+    return bot_token.strip(), chat_id.strip()
+
+
+def ensure_sent_notifications_schema():
+    if os.path.exists(SENT_NOTIFICATIONS_FILE):
+        try:
+            df = pd.read_csv(SENT_NOTIFICATIONS_FILE)
+        except Exception:
+            df = pd.DataFrame(columns=SENT_COLUMNS)
+    else:
+        df = pd.DataFrame(columns=SENT_COLUMNS)
+
+    for col in SENT_COLUMNS:
+        if col not in df.columns:
+            if col == "current_price" and "close" in df.columns:
+                df[col] = df["close"]
+            else:
+                df[col] = ""
+
+    df = df[SENT_COLUMNS]
+    df.to_csv(SENT_NOTIFICATIONS_FILE, index=False)
+
+
+def reset_sent_notifications_if_new_day():
+    ensure_sent_notifications_schema()
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        df = pd.read_csv(SENT_NOTIFICATIONS_FILE)
+
+        if df.empty or "date" not in df.columns:
+            pd.DataFrame(columns=SENT_COLUMNS).to_csv(SENT_NOTIFICATIONS_FILE, index=False)
+            print("✅ Reset empty/invalid sent_notifications.csv")
+            return
+
+        dates = df["date"].astype(str).str[:10].dropna().unique()
+
+        if today not in dates:
+            pd.DataFrame(columns=SENT_COLUMNS).to_csv(SENT_NOTIFICATIONS_FILE, index=False)
+            print("✅ New day detected. Reset sent_notifications.csv")
+        else:
+            print("✅ sent_notifications.csv already belongs to today")
+
     except Exception as e:
-        print(f"⚠️ Telegram send failed: {e}")
+        print(f"⚠️ Could not validate sent_notifications.csv. Resetting. Error: {e}")
+        pd.DataFrame(columns=SENT_COLUMNS).to_csv(SENT_NOTIFICATIONS_FILE, index=False)
+
+
+def already_sent_today(symbol, direction):
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    ensure_sent_notifications_schema()
+
+    try:
+        df = pd.read_csv(SENT_NOTIFICATIONS_FILE)
+
+        if df.empty:
+            return False
+
+        if not {"date", "symbol", "direction", "status"}.issubset(df.columns):
+            return False
+
+        df["date"] = df["date"].astype(str).str[:10]
+        df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
+        df["direction"] = df["direction"].astype(str).str.upper().str.strip()
+        df["status"] = df["status"].astype(str).str.upper().str.strip()
+
+        match = df[
+            (df["date"] == today)
+            & (df["symbol"] == str(symbol).upper().strip())
+            & (df["direction"] == str(direction).upper().strip())
+            & (df["status"] == "SENT")
+        ]
+
+        return not match.empty
+
+    except Exception as e:
+        print(f"⚠️ Error checking sent notification log: {e}")
         return False
 
 
-def send_in_chunks(token, chat_id, text, chunk_size=3500):
-    """Split long messages into safe chunks."""
-    chunks = []
+def log_sent_notification(
+    symbol,
+    direction,
+    entry_price="",
+    close="",
+    prev_close="",
+    orh="",
+    orl="",
+    lot_size="",
+    status="SENT",
+):
+    ensure_sent_notifications_schema()
 
-    while len(text) > chunk_size:
-        split_idx = text.rfind("\n", 0, chunk_size)
-        if split_idx == -1:
-            split_idx = chunk_size
-        chunks.append(text[:split_idx])
-        text = text[split_idx:]
+    row = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "symbol": symbol,
+        "direction": direction,
+        "entry_price": entry_price,
+        "current_price": close,
+        "close": close,
+        "prev_close": prev_close,
+        "orh": orh,
+        "orl": orl,
+        "lot_size": lot_size,
+        "status": status,
+    }
 
-    chunks.append(text)
+    df = pd.read_csv(SENT_NOTIFICATIONS_FILE)
 
-    success_all = True
+    for col in SENT_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
 
-    for chunk in chunks:
-        success = send_telegram_message(token, chat_id, chunk)
-        if not success:
-            success_all = False
+    df = df[SENT_COLUMNS]
 
-    return success_all
-
-
-def format_and_send(chat_id, signals, token=None):
-    """Format signals + send via Telegram safely."""
-    msg = format_message(signals)
-
-    success = send_in_chunks(token, chat_id, msg)
-
-    if not success:
-        backup = "last_telegram_message.txt"
-        with open(backup, "w", encoding="utf-8") as f:
-            f.write(msg)
-        print(f"💾 Saved message locally -> {backup}")
-
-    return success
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    df.to_csv(SENT_NOTIFICATIONS_FILE, index=False)
 
 
-def load_config(path="config.ini"):
-    """Load Telegram token + chat ID."""
-    cfg = configparser.ConfigParser()
-    cfg.read(path)
-    return cfg["DEFAULT"]
+def clean_num(x):
+    try:
+        if pd.isna(x):
+            return ""
+        val = float(x)
+        if val.is_integer():
+            return str(int(val))
+        return f"{val:.2f}"
+    except Exception:
+        return str(x)
+
+
+def build_message(
+    symbol,
+    direction,
+    entry_price="",
+    close="",
+    prev_close="",
+    orh="",
+    orl="",
+    lot_size="",
+    extras=None,
+):
+    direction = str(direction).upper().strip()
+
+    emoji = "🟢" if direction == "BUY" else "🔴"
+
+    message = f"""
+{emoji} ORB SIGNAL
+
+Symbol: {symbol}
+Direction: {direction}
+
+Entry: ₹{clean_num(entry_price)}
+Current: ₹{clean_num(close)}
+Prev Close: ₹{clean_num(prev_close)}
+
+ORH: ₹{clean_num(orh)}
+ORL: ₹{clean_num(orl)}
+Lot Size: {lot_size}
+
+Time: {datetime.now().strftime("%H:%M:%S")}
+""".strip()
+
+    if extras:
+        message += "\n\n" + "\n".join(f"{k}: {v}" for k, v in extras.items())
+
+    return message
+
+
+def send_telegram_message(message):
+    bot_token, chat_id = load_telegram_config()
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+    }
+
+    try:
+        response = requests.post(url, data=payload, timeout=15)
+    except requests.exceptions.RequestException:
+        response = requests.post(url, data=payload, timeout=15)
+
+    if response.status_code != 200:
+        print("❌ Telegram API error:")
+        print(response.text)
+        return False
+
+    return True
+
+
+def send_signal_notification(
+    symbol,
+    direction,
+    entry_price="",
+    close="",
+    prev_close="",
+    orh="",
+    orl="",
+    lot_size="",
+    extras=None,
+):
+    reset_sent_notifications_if_new_day()
+
+    symbol = str(symbol).upper().strip()
+    direction = str(direction).upper().strip()
+
+    if already_sent_today(symbol, direction):
+        print(f"⏭️ Already sent today: {symbol} {direction}")
+        return False
+
+    message = build_message(
+        symbol=symbol,
+        direction=direction,
+        entry_price=entry_price,
+        close=close,
+        prev_close=prev_close,
+        orh=orh,
+        orl=orl,
+        lot_size=lot_size,
+        extras=extras,
+    )
+
+    sent = send_telegram_message(message)
+
+    if sent:
+        log_sent_notification(
+            symbol=symbol,
+            direction=direction,
+            entry_price=entry_price,
+            close=close,
+            prev_close=prev_close,
+            orh=orh,
+            orl=orl,
+            lot_size=lot_size,
+            status="SENT",
+        )
+
+        print(f"✅ Telegram sent and logged: {symbol} {direction}")
+        return True
+
+    log_sent_notification(
+        symbol=symbol,
+        direction=direction,
+        entry_price=entry_price,
+        close=close,
+        prev_close=prev_close,
+        orh=orh,
+        orl=orl,
+        lot_size=lot_size,
+        status="FAILED",
+    )
+
+    print(f"❌ Telegram failed and logged: {symbol} {direction}")
+    return False

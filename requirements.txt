@@ -1,6 +1,13 @@
-pandas
-yfinance
-pytz
-requests
-python-telegram-bot
-configparser
+# Pinned to the versions the results were produced with (Python 3.13).
+pandas==2.3.3
+numpy==2.3.4
+scipy==1.17.1
+scikit-learn==1.9.0
+xgboost==3.2.0
+requests==2.32.5
+Flask==3.1.2
+matplotlib==3.10.7
+waitress==3.0.2        # dashboard server on the VM
+
+# tests
+pytest==9.1.1

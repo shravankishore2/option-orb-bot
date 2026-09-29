@@ -1,0 +1,14 @@
+# /etc/systemd/system/orbital.timer — 09:15 IST on weekdays: 45 min after the 08:30
+# token refresh, 5 min after QuantRadar's 09:10 monitor start (staggered), and
+# ~25 min before ORBITAL's first decision at 09:40 (preparation takes ~2-3 min).
+# Holidays are skipped by the service's ExecCondition.
+[Unit]
+Description=Start ORBITAL at 09:15 IST on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:15:00 Asia/Kolkata
+Persistent=true
+Unit=orbital.service
+
+[Install]
+WantedBy=timers.target

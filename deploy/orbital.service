@@ -1,0 +1,32 @@
+# /etc/systemd/system/orbital.service — the ORBITAL signal bot (signals only; no order path).
+# Started by orbital.timer on NSE trading days. Runs the session, stores the official
+# closing prices after 15:40, then exits. Uses the Dhan token newsalert-token.service
+# refreshes at 08:30; ORBITAL never logs in to Dhan itself.
+[Unit]
+Description=ORBITAL opening-range-breakout signals (session run)
+After=network-online.target newsalert-token.service
+Wants=network-online.target
+StartLimitIntervalSec=3600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/orbital
+Environment=PYTHONUNBUFFERED=1 TZ=Asia/Kolkata
+# Same NSE holiday list as QuantRadar: its calendar decides whether today is a session.
+ExecCondition=/bin/sh -c 'cd /home/ubuntu/newsalert && exec .venv/bin/python -m newsalert is-trading-window --until 15:35'
+ExecStart=/home/ubuntu/orbital/.venv/bin/python -u main.py --session
+Restart=on-failure
+RestartSec=120
+# exit 2 = no usable Dhan token after a 15-min wait; already alerted on Telegram, don't loop
+RestartPreventExitStatus=2
+# a 1 GB VM shared with QuantRadar: cap ORBITAL rather than let it push the others into swap
+MemoryHigh=350M
+MemoryMax=450M
+Nice=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orbital

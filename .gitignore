@@ -1,8 +1,36 @@
+# --- secrets and account details: never commit ---------------------------
+.env
+.env.*
 config.ini
-backtest_opening_range.py
-backtest_results_intraday.csv
-backtest_opening_range.csv
-backtest_results_OLD.csv
-last_telegram_message.txt
+*token*.json
+*.pem
+*.key
+
+# --- market data (Dhan's / NSE's, not ours to redistribute) --------------
+# Rebuild: python fetch_symbols.py --refresh; python run_pipeline.py
+data/
+archive/data/
+models/walkforward/
+
+# --- live logs, trades and signals ----------------------------------------
+logs/
+*.log
+live_decisions*.csv
 sent_notifications.csv
-equity_curve_intraday.png
+backtest_opening_range.csv
+backtest_results*.csv
+*signals*.csv
+opening_range_breakouts.csv
+opening_15min_ohlc.csv
+latest_5min_ohlc.csv
+last_telegram_message.txt
+
+# --- local artefacts ------------------------------------------------------
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+.idea/
+*.png
+!static/figures/*.png
+*.pdf

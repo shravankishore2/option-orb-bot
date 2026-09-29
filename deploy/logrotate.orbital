@@ -1,0 +1,11 @@
+# /etc/logrotate.d/orbital — only for logs/*.log written by start.sh runs; the systemd
+# services log to the journal, which journald.conf.d caps (500M, 30 days).
+/home/ubuntu/orbital/logs/*.log {
+	weekly
+	rotate 4
+	compress
+	missingok
+	notifempty
+	copytruncate
+	su ubuntu ubuntu
+}

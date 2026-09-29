@@ -1,0 +1,23 @@
+# /etc/systemd/system/orbital-web.service — ORBITAL dashboard (reads CSV/JSON only; never
+# calls the broker). Localhost only; Caddy adds HTTPS and the password in front of it.
+[Unit]
+Description=ORBITAL dashboard
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/orbital
+Environment=TZ=Asia/Kolkata
+ExecStart=/home/ubuntu/orbital/.venv/bin/waitress-serve --listen=127.0.0.1:5050 --threads=2 webapp:app
+Restart=always
+RestartSec=5
+MemoryMax=200M
+NoNewPrivileges=yes
+PrivateTmp=yes
+SyslogIdentifier=orbital-web
+
+[Install]
+WantedBy=multi-user.target

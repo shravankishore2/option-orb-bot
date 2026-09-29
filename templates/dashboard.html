@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ORBITAL · {{ active_tab|capitalize }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% if active_tab == "live" %}<meta http-equiv="refresh" content="30">{% endif %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="app-shell">
+
+    <!-- HEADER -->
+    <header class="topbar">
+        <div class="brand-block">
+            <div class="brand-icon">O</div>
+            <div>
+                <h1>ORBITAL</h1>
+                <p>Opening Range Breakout · ML-filtered · Nifty 200</p>
+            </div>
+        </div>
+        <div class="top-meta">
+            <div class="meta-pill status-{{ status_css }}"><span class="dot"></span>{{ status }}</div>
+            <div class="meta-card {% if heartbeat_stale %}warn{% endif %}">
+                <span>BOT LAST CYCLE</span>
+                <strong>{{ heartbeat if heartbeat else "—" }}{% if heartbeat_stale %} ⚠{% endif %}</strong>
+            </div>
+            <div class="meta-card"><span>AS OF</span><strong>{{ today }}</strong></div>
+            <div class="meta-card"><span>UPDATED</span><strong>{{ updated_at }}</strong></div>
+        </div>
+    </header>
+
+    {% if heartbeat_stale %}
+    <div class="banner warn">
+        The market is open but the bot hasn't logged a cycle in over 12 minutes.
+        Check that <code>main.py</code> is running and the Dhan token is valid.
+    </div>
+    {% endif %}
+
+    <!-- NAV -->
+    <nav class="tabs">
+        <a href="{{ url_for('live') }}" class="{% if active_tab == 'live' %}active{% endif %}">▲ Live Scanner</a>
+        <a href="{{ url_for('historical') }}" class="{% if active_tab == 'historical' %}active{% endif %}">◷ Historical Signals</a>
+        <a href="{{ url_for('performance') }}" class="{% if active_tab == 'performance' %}active{% endif %}">▥ Performance</a>
+        <a href="{{ url_for('about') }}" class="{% if active_tab == 'about' %}active{% endif %}">ⓘ About</a>
+    </nav>
+
+
+    <!-- ============================================================ LIVE -->
+    {% if active_tab == "live" %}
+
+    <section class="stats-row">
+        <div class="stat-card"><span>SIGNALS TODAY</span><strong class="amber">{{ counts.all }}</strong></div>
+        <div class="stat-card"><span>GO (SENT)</span><strong class="green">{{ counts.GO }}</strong></div>
+        <div class="stat-card"><span>SKIPPED BY MODEL</span><strong class="muted">{{ counts.SKIP }}</strong></div>
+        <div class="stat-card"><span>STALE (NOT SENT)</span><strong class="muted">{{ counts.STALE }}</strong></div>
+        <div class="stat-card"><span>GO THRESHOLD</span><strong>{{ model.threshold }}</strong></div>
+        <div class="stat-card"><span>MODEL TRAINED TO</span><strong>{{ model.trained_through }}</strong></div>
+    </section>
+
+    <section class="filter-strip">
+        <div class="filter-label">UP TO TIME</div>
+        <div class="time-buttons">
+            {% for t in time_filters %}
+            <a href="{{ url_for('live', time=t, show=show) }}" class="time-btn {% if selected_time == t %}active{% endif %}">{{ t }}</a>
+            {% endfor %}
+        </div>
+        <div class="toggle">
+            <a href="{{ url_for('live', time=selected_time, show='go') }}" class="time-btn {% if show == 'go' %}active{% endif %}">GO only</a>
+            <a href="{{ url_for('live', time=selected_time, show='all') }}" class="time-btn {% if show == 'all' %}active{% endif %}">All decisions</a>
+        </div>
+    </section>
+
+    {% if legacy %}
+    <div class="banner">No decision log for today yet — showing the Telegram sent log.</div>
+    {% endif %}
+
+    <main class="tables-grid">
+        {% for side, rows, label in [("sell", sell_signals, "▼ SELL"), ("buy", buy_signals, "▲ BUY")] %}
+        <section class="signal-panel {{ side }}-panel">
+            <div class="panel-title"><h2>{{ label }} <span>({{ rows|length }})</span></h2></div>
+            {% if rows %}
+            <div class="table-wrap">
+                <table>
+                    <thead><tr>
+                        <th>Time</th><th>Symbol</th><th>Decision</th><th>Score</th>
+                        <th>Entry</th><th>Current</th>
+                        <th class="sortable-diff" onclick="cycleSort(this)"><span class="diff-header">P&amp;L <span class="sort-arrow">↕</span></span></th>
+                        <th>Stop</th><th>ORH</th><th>ORL</th>
+                    </tr></thead>
+                    <tbody>
+                    {% for s in rows %}
+                    <tr class="row-{{ s.decision|lower }}">
+                        <td>{{ s.time }}</td>
+                        <td class="symbol {{ side }}-symbol">{{ s.symbol }}</td>
+                        <td><span class="decision {{ s.decision|lower }}">{{ s.decision }}</span></td>
+                        <td>
+                            {% if s.score %}
+                            <div class="scorebar" title="score {{ s.score }} vs threshold">
+                                <i style="width:{{ s.score_pct }}%"></i><b style="left:{{ s.thr_pct }}%"></b>
+                            </div><small>{{ s.score }}</small>
+                            {% endif %}
+                        </td>
+                        <td>₹{{ s.entry }}</td>
+                        <td>{% if s.current %}₹{{ s.current }}{% endif %}</td>
+                        <td data-v="{{ s.diff_raw if s.diff_raw is not none else '' }}"
+                            class="{% if s.diff_raw is not none and s.diff_raw != '' %}{% if s.diff_raw >= 0 %}pos{% else %}neg{% endif %}{% endif %}">{{ s.diff }}</td>
+                        <td>{% if s.stop %}₹{{ s.stop }}{% endif %}</td>
+                        <td>₹{{ s.orh }}</td>
+                        <td>₹{{ s.orl }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">No {{ side|upper }} {% if show == 'go' %}GO {% endif %}signals up to {{ selected_time }}.</div>
+            {% endif %}
+        </section>
+        {% endfor %}
+    </main>
+    <p class="footnote">Decisions are made on completed 5-minute candles. A signal first seen more than
+        10 minutes late (e.g. after a restart) is logged as STALE and not sent. The bar shows the model's
+        score; the white tick is the GO threshold.</p>
+    {% endif %}
+
+
+    <!-- ============================================================ HISTORICAL -->
+    {% if active_tab == "historical" %}
+    <section class="page-section">
+        <div class="section-header">
+            <div>
+                <h2>Historical Signals</h2>
+                <p>{% if filters.source == 'backtest' %}Walk-forward backtest — every signal the rules fired, the model's score, and what happened.
+                   {% else %}The live bot's signal log.{% endif %}</p>
+            </div>
+        </div>
+
+        <form class="filters-form" method="GET" action="{{ url_for('historical') }}">
+            <div>
+                <label>Source</label>
+                <select name="source">
+                    <option value="live" {% if filters.source == 'live' %}selected{% endif %}>Live log</option>
+                    <option value="backtest" {% if filters.source == 'backtest' %}selected{% endif %} {% if not has_backtest %}disabled{% endif %}>Backtest (walk-forward)</option>
+                </select>
+            </div>
+            <div><label>Date</label><input type="date" name="date" value="{{ filters.date }}"></div>
+            <div>
+                <label>Direction</label>
+                <select name="direction">
+                    {% for d in ["ALL", "BUY", "SELL"] %}<option value="{{ d }}" {% if filters.direction == d %}selected{% endif %}>{{ d }}</option>{% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Decision</label>
+                <select name="decision">
+                    <option value="ALL" {% if filters.decision == 'ALL' %}selected{% endif %}>ALL</option>
+                    <option value="GO" {% if filters.decision == 'GO' %}selected{% endif %}>GO only</option>
+                </select>
+            </div>
+            <div><label>Symbol</label><input type="text" name="symbol" value="{{ filters.symbol }}" placeholder="RELIANCE"></div>
+            <div>
+                <label>Up To Time</label>
+                <select name="time">
+                    {% for t in time_filters %}<option value="{{ t }}" {% if filters.time == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+                </select>
+            </div>
+            <button type="submit">Apply</button>
+            <a href="{{ url_for('historical') }}" class="clear-link">Clear</a>
+        </form>
+
+        <p class="result-count">{{ "{:,}".format(total) }} signals{% if total > max_rows %} — showing the latest {{ max_rows }}; narrow the filter to see more{% endif %}.</p>
+
+        {% if trades %}
+        <div class="table-wrap full">
+            <table>
+                <thead><tr>
+                    <th>Date</th><th>Time</th><th>Symbol</th><th>Dir</th><th>Entry</th>
+                    <th>ORH</th><th>ORL</th><th>Prev Close</th><th>Score</th><th>Decision</th>
+                    {% if filters.source == 'backtest' %}<th>P&amp;L</th><th>Exit</th>{% endif %}
+                </tr></thead>
+                <tbody>
+                {% for t in trades %}
+                <tr class="row-{{ t.decision|lower }}">
+                    <td>{{ t.date }}</td><td>{{ t.time }}</td>
+                    <td class="symbol">{{ t.symbol }}</td>
+                    <td><span class="mini-badge {% if t.direction == 'BUY' %}buy-badge{% else %}sell-badge{% endif %}">{{ t.direction }}</span></td>
+                    <td>₹{{ t.entry }}</td><td>₹{{ t.orh }}</td><td>₹{{ t.orl }}</td><td>₹{{ t.prev_close }}</td>
+                    <td>{{ t.score }}</td>
+                    <td>{% if t.decision in ['GO', 'SKIP', 'STALE'] %}<span class="decision {{ t.decision|lower }}">{{ t.decision }}</span>{% else %}{{ t.decision }}{% endif %}</td>
+                    {% if filters.source == 'backtest' %}
+                    <td class="{% if t.pnl_raw != '' and t.pnl_raw is not none %}{% if t.pnl_raw >= 0 %}pos{% else %}neg{% endif %}{% endif %}">{{ t.pnl }}</td>
+                    <td>{{ t.exit }}</td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state large">No signals match this filter.</div>
+        {% endif %}
+    </section>
+    {% endif %}
+
+
+    <!-- ============================================================ PERFORMANCE -->
+    {% if active_tab == "performance" %}
+    <section class="page-section">
+        {% if not view %}
+        <div class="empty-state large">
+            No research results yet. Build them with:<br>
+            <code>python run_pipeline.py</code>
+        </div>
+        {% else %}
+
+        <div class="section-header">
+            <div>
+                <h2>Performance</h2>
+                <p>Walk-forward results: each month is scored by a model trained only on earlier months.
+                   Same exit rule and point-in-time universe for every row. Gross of costs.</p>
+            </div>
+        </div>
+
+        <div class="period-tabs">
+            {% for key, label in view.periods %}
+            <a href="{{ url_for('performance', period=key) }}" class="time-btn {% if view.period == key %}active{% endif %}">{{ label }}</a>
+            {% endfor %}
+        </div>
+
+        {% if view.headline %}
+        <h3 class="subhead">{{ view.headline_name }}{% if view.headline_status %} · {{ view.headline_status }}{% endif %}</h3>
+        <div class="performance-grid">
+            <div class="perf-card"><span>Model trades</span><strong>{{ view.headline.trades }}</strong><small>{{ view.headline.per_day }} / day</small></div>
+            <div class="perf-card"><span>Mean per trade</span><strong class="{% if view.headline.mean_raw and view.headline.mean_raw > 0 %}green{% else %}red{% endif %}">{{ view.headline.mean }}</strong><small>95% CI {{ view.headline.ci }}</small></div>
+            <div class="perf-card"><span>Win rate</span><strong>{{ view.headline.win }}</strong><small>profit factor {{ view.headline.pf }}</small></div>
+            <div class="perf-card"><span>Sharpe (ann.)</span><strong>{{ view.headline.sharpe }}</strong><small>deflated SR {{ view.dsr }}</small></div>
+            <div class="perf-card"><span>Max drawdown</span><strong class="red">{{ view.headline.dd }}</strong><small>months + {{ view.headline.months }}</small></div>
+            <div class="perf-card"><span>Beats random picks?</span><strong>p = {{ view.p_value }}</strong><small>random picks avg {{ view.random_sel }}</small></div>
+        </div>
+        {% if view.concentration %}<p class="footnote">⚠ {{ view.concentration }}</p>{% endif %}
+        {% endif %}
+
+        <h3 class="subhead">Strategy vs baselines · {{ view.block.start }} → {{ view.block.end }} ({{ view.block.sessions }} sessions)</h3>
+        <div class="table-wrap full">
+            <table>
+                <thead><tr><th>Strategy</th><th>Trades</th><th>/day</th><th>Win%</th><th>Mean/trade</th>
+                    <th>95% CI (day bootstrap)</th><th>PF</th><th>Sharpe</th><th>Max DD</th><th>Months +</th></tr></thead>
+                <tbody>
+                {% for s in view.strategies %}
+                <tr class="{% if s.is_model %}highlight{% endif %}">
+                    <td>{{ s.name }}{% if s.status %}<br><small>{{ s.status }}</small>{% endif %}</td><td>{{ s.trades }}</td><td>{{ s.per_day }}</td><td>{{ s.win }}</td>
+                    <td class="{% if s.mean_raw is not none %}{% if s.mean_raw >= 0 %}pos{% else %}neg{% endif %}{% endif %}">{{ s.mean }}</td>
+                    <td>{{ s.ci }}</td><td>{{ s.pf }}</td><td>{{ s.sharpe }}</td><td>{{ s.dd }}</td><td>{{ s.months }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="footnote">v1 is the pre-registered model and failed its clean test; v2 (live) changes only the
+            label and was chosen after that failure, so its older numbers are post-hoc — its own clean test is
+            every session from 2026-09-23 (docs/PREREGISTRATION.md).
+            If the confidence interval crosses zero, the period's result is not
+            distinguishable from zero. "Beats random picks" draws, every day, as many trades at random from
+            that day's signals as the model chose — the p-value is how often chance did as well.</p>
+
+        {% if view.equity %}<h3 class="subhead">Cumulative P&amp;L</h3>{{ view.equity|safe }}{% endif %}
+        {% if view.monthly %}<h3 class="subhead">Model P&amp;L by month</h3>{{ view.monthly|safe }}{% endif %}
+
+        {% if view.shap %}
+        <h3 class="subhead">What the model looks at</h3>
+        <div class="figure-grid">
+            {% for f in view.shap %}<img src="{{ url_for('static', filename='figures/' + f) }}" alt="model explanation {{ f }}">{% endfor %}
+        </div>
+        <p class="footnote">SHAP values: how much each input pushed a signal's score up or down. See docs/MODEL.md.</p>
+        {% endif %}
+
+        {% if view.paper %}
+        <h3 class="subhead">Paper test — the live bot replayed cycle by cycle ({{ view.paper_total }} total)</h3>
+        <div class="table-wrap full">
+            <table>
+                <thead><tr><th>Date</th><th>Time</th><th>Symbol</th><th>Dir</th><th>Entry</th><th>Score</th><th>P&amp;L</th><th>Exit</th></tr></thead>
+                <tbody>
+                {% for p in view.paper %}
+                <tr><td>{{ p.date }}</td><td>{{ p.time }}</td><td class="symbol">{{ p.symbol }}</td><td>{{ p.direction }}</td>
+                    <td>₹{{ p.entry_price }}</td><td>{{ "%.2f"|format(p.score) }}</td>
+                    <td class="{% if p["pnl_%"] >= 0 %}pos{% else %}neg{% endif %}">{{ p.pnl }}</td><td>{{ p.exit_reason }}</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        {% endif %}
+    </section>
+    {% endif %}
+
+
+    <!-- ============================================================ ABOUT -->
+    {% if active_tab == "about" %}
+    <section class="page-section about-section">
+        <h2>About ORBITAL</h2>
+        <p>ORBITAL scans the Nifty 200 for opening-range breakouts, then asks a gradient-boosted model
+            whether each breakout looks like one that follows through. Only the ones it rates in the top
+            couple of percent are sent. Everything — live bot and backtest — runs the same code, so what
+            you see here is what was tested.</p>
+
+        <div class="about-grid">
+            <div><h3>1 · Signal</h3><p>After the 09:20–09:35 range forms, each completed 5-minute candle is
+                checked: a break of the range, a ±1.8% move from yesterday's close, and a pivot confirmation.</p></div>
+            <div><h3>2 · Score</h3><p>28 inputs — range geometry, volume, VWAP, volatility, sector and index
+                context — go into XGBoost, retrained monthly. It predicts whether the trade will make money
+                under the exact exit rule used below.</p></div>
+            <div><h3>3 · Act</h3><p>GO signals are sent to Telegram with a stop and trail. Everything else is
+                logged with its score, so the model's choices can be audited later.</p></div>
+        </div>
+
+        <h3 class="subhead">Current configuration</h3>
+        <div class="table-wrap full">
+            <table><tbody>
+            {% for k, v in cfg %}<tr><td class="symbol">{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
+            </tbody></table>
+        </div>
+
+        <p class="footnote">
+            {% if frozen == True %}✅ strategy_config.py matches the pre-registered hash (<code>{{ sha[:12] }}…</code>) — the clean-test result is genuinely out of sample.
+            {% elif frozen == False %}⚠️ strategy_config.py has changed since it was pre-registered. Clean-test results produced after the change are in-sample.
+            {% else %}Pre-registration record not found.{% endif %}
+        </p>
+        <p class="disclaimer">Research project. Not financial advice. Past performance does not predict future results.</p>
+    </section>
+    {% endif %}
+
+
+    <footer class="footer">
+        <div><strong>ORBITAL</strong><span>Opening Range Breakout · B.Tech final-year project</span></div>
+        <div>Model: {{ model.features }} inputs · trained to {{ model.trained_through }} · Local CSV powered</div>
+    </footer>
+</div>
+
+<script>
+// Sort a table by the P&L column: descending → ascending → original order.
+function cycleSort(header) {
+    const table = header.closest("table");
+    const tbody = table.querySelector("tbody");
+    const col = Array.from(header.parentNode.children).indexOf(header);
+    if (!tbody.dataset.original) tbody.dataset.original = tbody.innerHTML;
+    let state = parseInt(header.dataset.state || "0");
+    const val = r => parseFloat(r.cells[col].dataset.v);
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    const arrow = header.querySelector(".sort-arrow");
+    if (state < 2) {
+        const dir = state === 0 ? -1 : 1;
+        rows.sort((a, b) => {
+            const av = val(a), bv = val(b);
+            if (isNaN(av)) return 1;
+            if (isNaN(bv)) return -1;
+            return dir * (av - bv);
+        });
+        tbody.innerHTML = "";
+        rows.forEach(r => tbody.appendChild(r));
+        arrow.innerText = state === 0 ? "↓" : "↑";
+    } else {
+        tbody.innerHTML = tbody.dataset.original;
+        arrow.innerText = "↕";
+    }
+    header.dataset.state = (state + 1) % 3;
+}
+</script>
+</body>
+</html>

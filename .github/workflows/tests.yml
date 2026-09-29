@@ -1,0 +1,27 @@
+name: tests
+
+# The live bot runs on a VM (deploy/), not here: no market-data credentials,
+# Telegram secrets or trade logs ever touch this public repository's CI.
+on:
+  push:
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      # includes tests/test_signals_only.py: fails if any order endpoint is reachable
+      - run: python -m pytest -q
+        env:
+          TZ: Asia/Kolkata
