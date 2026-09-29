@@ -94,3 +94,9 @@ def test_secure_flag_comes_from_the_proxy_header(client):
     assert "Secure" in r.headers["Set-Cookie"]
     r = plain.post("/api/login", json={"password": PW})     # local http: no Secure, or it'd never be sent
     assert "Secure" not in r.headers["Set-Cookie"]
+
+
+def test_deployed_mode_always_marks_the_cookie_secure(client, monkeypatch):
+    monkeypatch.setattr(webapp, "REQUIRE_LOGIN", True)
+    r = webapp.app.test_client().post("/api/login", json={"password": PW})   # plain http, no header
+    assert "Secure" in r.headers["Set-Cookie"]

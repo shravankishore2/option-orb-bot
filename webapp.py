@@ -40,7 +40,8 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 SESSION_HOURS = 12
 PASSWORD = auth.configured_password()
-if not PASSWORD and os.getenv("ORBITAL_REQUIRE_LOGIN") == "1":
+REQUIRE_LOGIN = os.getenv("ORBITAL_REQUIRE_LOGIN") == "1"
+if not PASSWORD and REQUIRE_LOGIN:
     raise SystemExit("ORBITAL_REQUIRE_LOGIN=1 but no dashboard password is configured")
 _secret = os.getenv("ORBITAL_DASHBOARD_SECRET")
 SIGNER = auth.SessionSigner(_secret.encode() if _secret else None, ttl_s=SESSION_HOURS * 3600)
@@ -87,9 +88,15 @@ def _try_password(password):
     return True, "", 0
 
 
+def _cookie_secure():
+    # Deployed (REQUIRE_LOGIN) = always behind HTTPS: Secure regardless of what the
+    # proxy headers say. Locally, only when the request really is HTTPS.
+    return REQUIRE_LOGIN or request.is_secure
+
+
 def _set_session(resp):
     resp.set_cookie(auth.COOKIE, SIGNER.issue(), max_age=SESSION_HOURS * 3600, httponly=True,
-                    samesite="Strict", secure=request.is_secure, path="/")
+                    samesite="Strict", secure=_cookie_secure(), path="/")
     return resp
 
 
@@ -129,14 +136,14 @@ def api_login():
 @app.post("/api/logout")
 def api_logout():
     resp = Response(status=204)
-    resp.delete_cookie(auth.COOKIE, path="/", secure=request.is_secure, httponly=True, samesite="Strict")
+    resp.delete_cookie(auth.COOKIE, path="/", secure=_cookie_secure(), httponly=True, samesite="Strict")
     return resp
 
 
 @app.post("/logout")
 def logout():
     resp = redirect(url_for("login_page"), code=303)
-    resp.delete_cookie(auth.COOKIE, path="/", secure=request.is_secure, httponly=True, samesite="Strict")
+    resp.delete_cookie(auth.COOKIE, path="/", secure=_cookie_secure(), httponly=True, samesite="Strict")
     return resp
 
 
