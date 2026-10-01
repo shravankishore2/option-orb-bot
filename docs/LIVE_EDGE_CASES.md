@@ -42,6 +42,16 @@ handling rule and, where it can be tested offline, a test in `tests/`.
 | 28 | Two services share the account's 5 req/s limit | ORBITAL at 3 req/s, silent at :57–:04 of each minute | — |
 | 29 | The GitHub workflow ran the bot on a cron with a static token and uploaded trade logs as artifacts of a public repo | Workflow now runs the tests only | — |
 
+## Shadow tracking (2026-10-02)
+
+| # | Issue | Handling | Test |
+|---|---|---|---|
+| 30 | Only GO signals had outcomes, so the filter couldn't be judged | Every signal is logged at signal time and paper-tracked by `exits.simulate` | `tests/test_shadow.py` |
+| 31 | A label written before the outcome was known would leak into training | Labels only after the exit candle completes (asserted); written once; training reads only `shadow_outcomes.csv` | `test_label_appears_only_once_the_exit_candle_has_closed`, `test_no_label_while_open_and_none_from_a_forming_candle` |
+| 32 | The 15:15 exit candle completes after the last cycle (15:15:20) | Closing pass from 15:20 fetches only symbols with open paper positions; at 15:40 anything still open closes at its last candle ("LAST", as the backtest does) | `test_open_position_is_closed_at_its_last_candle_after_the_close` |
+| 33 | A promoted model would end the v2 forward test | v2 is frozen as a baseline that scores every signal; its decisions are logged separately | `test_every_signal_records_versions_scores_and_features_at_signal_time` |
+| 34 | Exporting the history at 6 significant digits changed the refit (threshold 0.64436 vs 0.64406) | Full-precision export; refit reproduces v2 bit for bit | `test_the_recipe_on_the_history_table_reproduces_v2_exactly` |
+
 ## Edge cases and how they're handled
 
 | Situation | Handling |

@@ -76,6 +76,32 @@ not config:
 
 ---
 
+## Shadow tracking, scorecard and model updates
+
+- **Every signal is tracked, GO and NO-GO** (`shadow.py`). At signal time the
+  bot logs the decision, the score, the threshold, both model versions and the
+  28 inputs as the model saw them. Each signal is then walked through the
+  session by the backtest's own exit engine (`exits.simulate`) on the candles
+  the bot already fetches, and **labelled once**, only after its exit candle
+  has closed. The label records its exit reason and time, P&L, and best and
+  worst move.
+- **Tracker** (dashboard): today's signals in GO and NO-GO tabs. It updates
+  after every price cycle, and the page receives the updates live
+  (Server-Sent Events, like QuantRadar).
+- **Scorecard** (dashboard): GO vs NO-GO hit rate and average P&L, missed
+  winners and avoided losers, both daily and cumulative. Fewer than 30 signals
+  is flagged as too few to read.
+- **Champion / challenger, monthly** (`challenger.py`, `registry.py`). On the
+  first Saturday of each month a challenger is trained on all labelled data.
+  It uses the walk-forward recipe, with date-grouped CV and leakage checks.
+  It is promoted only if it beats the champion on the last complete month, per
+  GO trade, at every cost level in RESULTS.md, with at least 30 GO trades
+  each. Every comparison is logged. The **v2 model stays frozen** as a
+  baseline that scores every signal, and every signal records which versions
+  scored it.
+- Sessions before tracking began were replayed through the live engine
+  (`shadow_backfill.py`) and are marked `replay`.
+
 ## How it works
 
 ```

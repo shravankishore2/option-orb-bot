@@ -11,6 +11,7 @@ config.ini
 data/
 archive/data/
 models/walkforward/
+models/registry/
 
 # --- live logs, trades and signals ----------------------------------------
 logs/

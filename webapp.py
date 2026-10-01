@@ -20,13 +20,18 @@ import hashlib
 import json
 import os
 import re
+import threading
+import time
 
 import pandas as pd
-from flask import Flask, Response, jsonify, render_template, request, redirect, url_for
+from flask import (Flask, Response, jsonify, render_template, request, redirect,
+                   stream_with_context, url_for)
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
 import charts
+import registry
+import shadow
 import strategy_config as C
 
 app = Flask(__name__)
@@ -63,6 +68,8 @@ def safe_next(target):
 def require_login():
     if request.endpoint in OPEN_ENDPOINTS or logged_in():
         return None
+    if request.path.startswith("/api/"):          # the live stream asks, like QuantRadar's client
+        return jsonify(error="login required"), 401
     return redirect(url_for("login_page", next=request.full_path.rstrip("?")))
 
 
@@ -149,6 +156,11 @@ def logout():
 
 @app.get("/healthz")
 def healthz():
+    return {"ok": True}
+
+
+@app.get("/api/me")
+def api_me():
     return {"ok": True}
 
 
@@ -504,6 +516,96 @@ def live():
                   counts={"all": len(everything), "GO": counts.get("GO", 0),
                           "SKIP": counts.get("SKIP", 0), "STALE": counts.get("STALE", 0)},
                   buy_signals=side("BUY"), sell_signals=side("SELL"))
+
+
+# ------------------------------------------------------------------ tracker (live push)
+# Same mechanism as QuantRadar's dashboard: Server-Sent Events. The bot rewrites
+# data/live/tracker.json after every price cycle; each open stream checks it once
+# a second and pushes the new snapshot (`event: tracker`, `id: <version>` so a
+# reconnect doesn't resend an unchanged one), with keep-alive comments between.
+# Streams end after STREAM_SECONDS (the browser reconnects in 3 s) and at most
+# MAX_STREAMS run at once, so they can't take every server thread.
+STREAM_SECONDS = 300
+MAX_STREAMS = 4
+_streams = threading.BoundedSemaphore(MAX_STREAMS)
+
+
+def tracker_snapshot():
+    snap = read_json(str(shadow.TRACKER_FILE)) or {}
+    snap.setdefault("rows", [])
+    snap["today"] = now_ist().date().isoformat()
+    return snap
+
+
+@app.get("/api/tracker")
+def api_tracker():
+    return tracker_snapshot()
+
+
+@app.get("/api/tracker/stream")
+def api_tracker_stream():
+    if not _streams.acquire(blocking=False):
+        return jsonify(error="too many live connections"), 503, {"Retry-After": "10"}
+    last = request.headers.get("Last-Event-ID")
+    max_events = request.args.get("max_events", type=int)       # tests and debugging
+
+    def events():
+        nonlocal last
+        sent, tick, started = 0, 0, time.monotonic()
+        try:
+            yield "retry: 3000\n\n"
+            while time.monotonic() - started < STREAM_SECONDS:
+                snap = tracker_snapshot()
+                version = str(snap.get("version", ""))
+                if version and version != last:
+                    last = version
+                    yield f"id: {version}\nevent: tracker\ndata: {json.dumps(snap, default=str)}\n\n"
+                    sent += 1
+                    if max_events and sent >= max_events:
+                        return
+                elif tick % 15 == 0:
+                    yield ": keep-alive\n\n"
+                tick += 1
+                time.sleep(1)
+        finally:
+            _streams.release()
+
+    return Response(stream_with_context(events()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.route("/tracker")
+def tracker():
+    snap = tracker_snapshot()
+    return render("tracker", snapshot=snap, snapshot_json=json.dumps(snap, default=str))
+
+
+# ------------------------------------------------------------------ scorecard
+def scorecard_view(by):
+    df = shadow.labelled_rows()
+    signals = shadow._read(shadow.SIGNALS_FILE)
+    open_n = 0
+    if not signals.empty:
+        labelled = set(df["signal_id"]) if not df.empty else set()
+        open_n = int((~signals["signal_id"].isin(labelled)).sum())
+    card = shadow.scorecard(df, by=by)
+    try:
+        champ = registry.champion()
+        versions = {"champion": champ.version, "champion_thr": champ.threshold,
+                    "champion_trained": champ.trained_through}
+    except Exception as e:                       # a broken registry must not hide the scorecard
+        versions = {"champion": f"error: {e}", "champion_thr": None, "champion_trained": None}
+    versions["baseline"] = registry.BASELINE_VERSION
+    scored_by = (df["model_version"].value_counts().to_dict() if not df.empty else {})
+    return {"by": by, "card": card, "open": open_n, "labelled": len(df), "versions": versions,
+            "scored_by": scored_by, "min_sample": shadow.MIN_SAMPLE, "costs": C.COST_SENSITIVITY,
+            "comparisons": list(reversed(registry.comparisons()))[:12]}
+
+
+@app.route("/scorecard")
+def scorecard():
+    by = "baseline_go" if request.args.get("filter") == "baseline" else "model_go"
+    return render("scorecard", sc=scorecard_view(by))
 
 
 @app.route("/historical")

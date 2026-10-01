@@ -45,6 +45,8 @@
     <!-- NAV -->
     <nav class="tabs">
         <a href="{{ url_for('live') }}" class="{% if active_tab == 'live' %}active{% endif %}">▲ Live Scanner</a>
+        <a href="{{ url_for('tracker') }}" class="{% if active_tab == 'tracker' %}active{% endif %}">◉ Tracker</a>
+        <a href="{{ url_for('scorecard') }}" class="{% if active_tab == 'scorecard' %}active{% endif %}">✓ Scorecard</a>
         <a href="{{ url_for('historical') }}" class="{% if active_tab == 'historical' %}active{% endif %}">◷ Historical Signals</a>
         <a href="{{ url_for('performance') }}" class="{% if active_tab == 'performance' %}active{% endif %}">▥ Performance</a>
         <a href="{{ url_for('about') }}" class="{% if active_tab == 'about' %}active{% endif %}">ⓘ About</a>
@@ -127,6 +129,153 @@
     <p class="footnote">Decisions are made on completed 5-minute candles. A signal first seen more than
         10 minutes late (e.g. after a restart) is logged as STALE and not sent. The bar shows the model's
         score; the white tick is the GO threshold.</p>
+    {% endif %}
+
+
+    <!-- ============================================================ TRACKER -->
+    {% if active_tab == "tracker" %}
+    <section class="page-section">
+        <div class="section-header">
+            <div>
+                <h2>Live Signal Tracker</h2>
+                <p>Every signal today, GO and NO-GO, paper-tracked with the backtest's exit rule on the
+                   5-minute candles the bot already fetches. <strong>Paper only — no orders.</strong></p>
+            </div>
+            <div class="conn-pill" id="trk-conn"><span class="dot"></span><span>connecting…</span></div>
+        </div>
+
+        <section class="stats-row" id="trk-stats"></section>
+
+        <div class="filter-strip">
+            <div class="filter-label" id="trk-asof">—</div>
+            <div class="toggle" role="tablist" aria-label="GO or NO-GO signals">
+                <button type="button" class="time-btn active" role="tab" aria-selected="true" data-tab="go">GO <span id="trk-n-go"></span></button>
+                <button type="button" class="time-btn" role="tab" aria-selected="false" data-tab="nogo">NO-GO <span id="trk-n-nogo"></span></button>
+            </div>
+        </div>
+
+        <div class="table-wrap full">
+            <table class="tracker-table">
+                <thead><tr>
+                    <th>Ticker</th><th>Signal</th><th>Dir</th><th>Score</th><th>Model</th>
+                    <th class="num">Entry</th><th class="num">Current</th><th class="num">% from entry</th>
+                    <th class="num">Stop-loss</th><th class="num">Trailing stop</th><th class="num">Target</th>
+                    <th class="num">Best</th><th class="num">Worst</th><th>Status</th><th>Exit</th>
+                </tr></thead>
+                <tbody id="trk-body"></tbody>
+            </table>
+        </div>
+        <div class="empty-state" id="trk-empty" hidden></div>
+        <noscript><div class="banner warn">The tracker needs JavaScript for live updates.</div></noscript>
+
+        <p class="footnote">Updated after every 5-minute price cycle and pushed to this page as it happens.
+            "% from entry", Best and Worst are signed in the trade's favour (a SELL that falls is green).
+            Prices are completed-candle closes, the same ones the exit rule uses. Stops are checked before
+            anything else in a candle; the trail moves only after a candle is survived. v2 has no fixed
+            target, so the Target column is blank. Positions still open after the last cycle are completed
+            from the 15:15 candle (or the last candle by 15:40).</p>
+    </section>
+    <script type="application/json" id="trk-data">{{ snapshot|tojson }}</script>
+    <script src="{{ url_for('static', filename='tracker.js') }}"></script>
+    {% endif %}
+
+
+    <!-- ============================================================ SCORECARD -->
+    {% if active_tab == "scorecard" %}
+    {% set t = sc.card.total %}
+    <section class="page-section">
+        <div class="section-header">
+            <div>
+                <h2>Filter Scorecard</h2>
+                <p>Did the model's GO / NO-GO split pay? Every signal is paper-tracked to its outcome;
+                   only completed outcomes count ({{ sc.labelled }} labelled, {{ sc.open }} still open).</p>
+            </div>
+            <div class="toggle">
+                <a href="{{ url_for('scorecard') }}" class="time-btn {% if sc.by == 'model_go' %}active{% endif %}">Live champion ({{ sc.versions.champion }})</a>
+                <a href="{{ url_for('scorecard', filter='baseline') }}" class="time-btn {% if sc.by == 'baseline_go' %}active{% endif %}">Frozen {{ sc.versions.baseline }} baseline</a>
+            </div>
+        </div>
+
+        {% if not t %}
+        <div class="empty-state large">No completed signals yet. The scorecard fills in as today's signals exit.</div>
+        {% else %}
+        {% macro hit(side) -%}
+            {% if side.n %}{{ "%.0f"|format(side.hit_rate) }}%{% else %}—{% endif %}
+        {%- endmacro %}
+        {% macro avg(v) -%}
+            {% if v is not none %}<span class="{{ 'pos' if v >= 0 else 'neg' }}">{{ "%+.3f"|format(v) }}%</span>{% else %}—{% endif %}
+        {%- endmacro %}
+        {% macro n(side) -%}
+            {{ side.n }}{% if side.too_few %} <span class="few" title="fewer than {{ sc.min_sample }} signals — too few to read">too few</span>{% endif %}
+        {%- endmacro %}
+
+        <h3 class="sub">Cumulative · {{ sc.card.first }} → {{ sc.card.last }}</h3>
+        <section class="stats-row">
+            <div class="stat-card"><span>GO HIT RATE</span><strong class="green">{{ hit(t.go) }}</strong><small>n = {{ n(t.go) }}</small></div>
+            <div class="stat-card"><span>NO-GO HIT RATE</span><strong>{{ hit(t.nogo) }}</strong><small>n = {{ n(t.nogo) }}</small></div>
+            <div class="stat-card"><span>GO AVG P&amp;L</span><strong>{{ avg(t.go.avg_pnl) }}</strong><small>per trade, gross</small></div>
+            <div class="stat-card"><span>NO-GO AVG P&amp;L</span><strong>{{ avg(t.nogo.avg_pnl) }}</strong><small>per trade, gross</small></div>
+            <div class="stat-card"><span>MISSED WINNERS</span><strong class="amber">{{ t.missed_winners }}</strong><small>NO-GO that profited{% if t.missed_winner_pnl is not none %} · avg {{ "%+.2f"|format(t.missed_winner_pnl) }}%{% endif %}</small></div>
+            <div class="stat-card"><span>AVOIDED LOSERS</span><strong class="green">{{ t.avoided_losers }}</strong><small>NO-GO that lost{% if t.avoided_loser_pnl is not none %} · avg {{ "%+.2f"|format(t.avoided_loser_pnl) }}%{% endif %}</small></div>
+        </section>
+        <p class="footnote">After round-trip costs (the RESULTS.md sensitivity):
+            {% for c in sc.costs %}{% set k = c|string %}
+            {{ "%.2f"|format(c) }}% → GO {{ avg(t.go.net[k]) }} · NO-GO {{ avg(t.nogo.net[k]) }}{% if not loop.last %};{% endif %}
+            {% endfor %}.
+            A hit is a trade that made money under the exit rule. Under {{ sc.min_sample }} signals a rate is too noisy to read.</p>
+
+        <h3 class="sub">Daily</h3>
+        <div class="table-wrap full">
+            <table>
+                <thead><tr>
+                    <th>Date</th><th class="num">GO n</th><th class="num">GO hit</th><th class="num">GO avg</th>
+                    <th class="num">NO-GO n</th><th class="num">NO-GO hit</th><th class="num">NO-GO avg</th>
+                    <th class="num">Missed winners</th><th class="num">Avoided losers</th>
+                </tr></thead>
+                <tbody>
+                {% for d in sc.card.days %}
+                <tr>
+                    <td>{{ d.date }}{% if d.replayed %} <span class="few" title="replayed through the live engine before shadow tracking began">replay</span>{% endif %}</td>
+                    <td class="num">{{ n(d.go) }}</td><td class="num">{{ hit(d.go) }}</td><td class="num">{{ avg(d.go.avg_pnl) }}</td>
+                    <td class="num">{{ n(d.nogo) }}</td><td class="num">{{ hit(d.nogo) }}</td><td class="num">{{ avg(d.nogo.avg_pnl) }}</td>
+                    <td class="num">{{ d.missed_winners }}</td><td class="num">{{ d.avoided_losers }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        <h3 class="sub">Model updates</h3>
+        <p class="footnote">Champion <strong>{{ sc.versions.champion }}</strong>
+            {% if sc.versions.champion_thr %}(GO ≥ {{ "%.3f"|format(sc.versions.champion_thr) }}, trained through {{ sc.versions.champion_trained }}){% endif %}
+            decides what is sent. The frozen <strong>{{ sc.versions.baseline }}</strong> baseline scores every signal too and is never replaced.
+            A challenger is trained on the first weekend of each month and promoted only if it beats the champion
+            on the last complete month at every cost level, with at least {{ sc.min_sample }} GO trades each.
+            {% if sc.scored_by %}Labelled signals by deciding model: {% for v, k in sc.scored_by.items() %}{{ v }} {{ k }}{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}</p>
+        {% if sc.comparisons %}
+        <div class="table-wrap full">
+            <table>
+                <thead><tr><th>Run</th><th>Held-out month</th><th>Champion</th><th>Challenger</th><th>Result</th></tr></thead>
+                <tbody>
+                {% for c in sc.comparisons %}
+                {% set a = c.champion_metrics %}{% set b = c.challenger_metrics %}
+                <tr>
+                    <td>{{ c.run_at[:10] }}</td>
+                    <td>{{ c.held_out_month }}{% if c.window %} <small class="muted">({{ c.window_sessions }} sessions)</small>{% endif %}</td>
+                    <td>{{ c.champion }}{% if a %} · {{ a.go_trades }} GO · {{ avg(a.net_per_trade['0.05']) }} net{% endif %}</td>
+                    <td>{{ c.challenger or "—" }}{% if b %} · {{ b.go_trades }} GO · {{ avg(b.net_per_trade['0.05']) }} net{% endif %}</td>
+                    <td>{% if c.promoted %}<span class="decision go">PROMOTED {{ c.new_champion }}</span>{% else %}<span class="decision skip">KEPT</span>{% endif %}
+                        <small class="muted">{{ c.reason }}</small></td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">No monthly comparison has run yet — the first is on the first weekend of the month.</div>
+        {% endif %}
+    </section>
     {% endif %}
 
 

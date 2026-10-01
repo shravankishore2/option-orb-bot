@@ -850,3 +850,29 @@ tr.highlight td { background: rgba(32, 228, 134, 0.06); font-weight: 700; }
 }
 .logout-btn:hover { border-color: var(--muted, #8fa3c0); }
 .logout-btn:focus-visible { outline: 2px solid #4f8cff; outline-offset: 2px; }
+
+/* ---- Tracker + Scorecard ------------------------------------------------ */
+.conn-pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted-2); font-size: 12px; font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap;
+}
+.conn-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.conn-pill.live { color: var(--green); border-color: rgba(32, 228, 134, 0.35); }
+.conn-pill.live .dot { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.conn-pill.reconnecting { color: var(--amber); border-color: rgba(246, 185, 59, 0.4); }
+.conn-pill.reconnecting .dot { background: var(--amber); }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tracker-table td { white-space: nowrap; }
+.tracker-table tr.row-closed td { opacity: 0.78; }
+.trk-status { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+              background: rgba(127, 140, 163, 0.14); color: var(--muted-2); }
+.trk-status.s-open { background: rgba(79, 140, 255, 0.14); color: #8fb6ff; }
+.trk-status.s-target { background: var(--green-soft); color: var(--green); }
+.trk-status.s-stopped { background: var(--red-soft); color: var(--red); }
+.trk-status.s-trailed { background: rgba(246, 185, 59, 0.12); color: var(--amber); }
+.few { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 5px; vertical-align: middle;
+       background: rgba(246, 185, 59, 0.12); color: var(--amber); }
+.stat-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+h3.sub { margin: 22px 2px 10px; font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted-2); }
+.filter-strip button.time-btn { font: inherit; cursor: pointer; }

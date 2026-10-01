@@ -68,3 +68,10 @@ At ~1.6 trades a day that is roughly **4–5 months** of sessions. Until then v2
 **Rule:** if any parameter in `strategy_config.py` changes before the criteria
 are evaluated, the forward result is relabelled in-sample and a v3 registration
 is needed.
+
+**Note added 2026-10-02 (no parameter changed).** From October 2026 the model whose
+GO decisions are *sent* can be replaced by a monthly challenger (`challenger.py`).
+The v2 forward test is unaffected: the frozen v2 model keeps scoring **every** live
+signal, and its own decisions (`baseline_score`, `baseline_go` in
+`data/live/shadow_signals.csv`, with each signal's outcome in
+`shadow_outcomes.csv`) are what the criteria above are evaluated on.

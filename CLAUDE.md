@@ -20,6 +20,8 @@ Always use the project venv (`.venv/bin/python`, Python 3.13); the system Python
 .venv/bin/python main.py --snapshot                              # store official session OHLC (run after 15:40 IST)
 .venv/bin/python main.py --session                               # one session + closing snapshot, then exit (systemd)
 .venv/bin/python fetch_symbols.py --refresh                      # download data/ind_nifty200list.csv + data/sectors.csv
+.venv/bin/python challenger.py --dry-run                         # monthly champion/challenger, change nothing
+.venv/bin/python shadow_backfill.py 2026-09-23 2026-10-01 --check   # replay sessions into the shadow log
 .venv/bin/python webapp.py                                       # dashboard, http://127.0.0.1:5050
 ```
 
@@ -42,6 +44,8 @@ Credentials: `config.ini` (git-ignored; template `config.example.ini`). Telegram
 - Parity is tested (`test_live_cycles_match_the_batch_replay`) and checked on real data by `paper_trade.py`, which replays sessions cycle-by-cycle through `LiveEngine` with `CacheSource` and diffs against `data/research/walkforward.csv`.
 
 **Data flow.** `dhan_client.py` (rate limit, retries, `regular_session()` filter) → `history_cache.py` (gzipped per-symbol cache in `data/history/`, fetches only missing ranges) → research: `survivorship.py` (point-in-time universe) → `build_historical_signals.py` → `mine_features.py` → `walk_forward.py` (monthly retrain; writes `models/walkforward/YYYY-MM.pkl` and, with `--train-live`, `models/orbital_model.pkl` + `.json`) → `report.py` (baselines, `stats.py`) → `docs/RESULTS.md` + `data/research/summary.json` (read by the dashboard). Live: `main.py` → `live_engine.LiveEngine` (`DhanSource`) → `notifier.py`; decisions logged to `live_decisions.csv`.
+
+**Shadow tracking and model roles.** `shadow.py` logs every live signal (GO and NO-GO) at signal time to `data/live/shadow_signals.csv` (append-only: decision, both models' scores/versions, features as `x_*`), walks it with `exits.simulate` on the cycle's candles, and writes its label ONCE to `shadow_outcomes.csv` after the exit candle completes (`_label` asserts it). Training reads labels only via `shadow.labelled_rows()`. `registry.py`: the frozen **baseline** (v2, `models/orbital_model.pkl`, never replaced) and the **champion** (decides GO; `models/registry/champion.json`, absent = v2). `challenger.py` (monthly timer) is the only thing that changes the champion. `data/training/history.csv.gz` is the research training set exported at full precision (`challenger.py --export-history`) — refitting it reproduces v2 bit for bit; the VM has no `data/research/`.
 
 **Universes differ by design.** Live uses today's real list (`data/ind_nifty200list.csv` via `fetch_symbols.get_symbols()`, with `ALIASES` such as LTIM→LTM). The backtest uses `data/nifty200_membership.csv`, a traded-value proxy rebuilt per rebalance (~83% overlap). Signal-set differences between live and backtest are expected to come only from this.
 

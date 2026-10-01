@@ -1,0 +1,21 @@
+# /etc/systemd/system/orbital-challenger.service — monthly champion/challenger model update.
+# Trains a challenger on all labelled data (history + completed shadow signals), compares it
+# with the champion on the last complete month, promotes it only if it wins, and logs the
+# comparison either way (models/registry/comparisons.jsonl). Never retrains daily.
+[Unit]
+Description=ORBITAL monthly champion/challenger model update
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/orbital
+Environment=PYTHONUNBUFFERED=1 TZ=Asia/Kolkata OMP_NUM_THREADS=1
+ExecStart=/home/ubuntu/orbital/.venv/bin/python -u challenger.py
+# shares a 1 GB VM: cap it, and run it below the dashboards' priority
+MemoryHigh=450M
+MemoryMax=600M
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+SyslogIdentifier=orbital-challenger

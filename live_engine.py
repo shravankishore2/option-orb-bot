@@ -29,6 +29,7 @@ import exits
 import history_cache
 import strategy_config as C
 from build_historical_signals import prev_session, replay_day
+from features import FEATURES as CONTEXT_FEATURES
 from features import MarketContext, build_symbol_history, compute_features, geometry_features
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -203,22 +204,48 @@ def load_bundle(path=MODEL_FILE, meta=MODEL_META):
     return bundle["model"], bundle["features"], float(bundle["threshold"]), info
 
 
-def score_rows(model, feature_list, rows):
-    """Score signal rows with the same feature engineering as training."""
+def feature_frame(rows):
+    """Signal rows -> every model input (geometry + context), as training builds them.
+
+    Values are left un-filled (NaN where unknown); models fill with 0, as in training.
+    """
     df = pd.DataFrame(rows)
     df.columns = [c.lower() for c in df.columns]
-    df, _ = geometry_features(df)
-    X = df.reindex(columns=feature_list).apply(pd.to_numeric, errors="coerce").fillna(0)
+    df, base = geometry_features(df)
+    df = df.loc[:, ~df.columns.duplicated()]
+    cols = list(dict.fromkeys(base + list(CONTEXT_FEATURES)))
+    return df.reindex(columns=cols).apply(pd.to_numeric, errors="coerce")
+
+
+def score_frame(model, feature_list, frame):
+    X = frame.reindex(columns=feature_list).fillna(0)
     return model.predict_proba(X)[:, 1]
+
+
+def score_rows(model, feature_list, rows):
+    """Score signal rows with the same feature engineering as training."""
+    return score_frame(model, feature_list, feature_frame(rows))
 
 
 # ------------------------------------------------------------------ engine
 class LiveEngine:
-    def __init__(self, source, model, feature_list, threshold, symbols, sectors):
+    """Completed candles -> rules -> features -> scores.
+
+    `model`/`feature_list`/`threshold` are the champion, whose GO decisions are
+    sent. `baseline` (a registry.Model, optional) is the frozen v2 model that
+    scores every signal alongside it. Each decision carries both scores, both
+    versions and the feature vector as of signal time.
+    """
+
+    def __init__(self, source, model, feature_list, threshold, symbols, sectors,
+                 version=C.MODEL_VERSION, baseline=None):
         self.source = source
         self.model = model
         self.features = feature_list
         self.threshold = threshold
+        self.version = version
+        self.baseline = baseline
+        self.today_candles = {}           # symbol -> completed candles, refreshed every cycle
         self.symbols = list(symbols)
         self.sectors = sectors
         self.day = None
@@ -289,6 +316,7 @@ class LiveEngine:
         # How many symbols have printed a candle today — 0 well after the open
         # means an exchange holiday (main.py stops for the day).
         self.symbols_with_data = sum(1 for g in today.values() if g is not None and not g.empty)
+        self.today_candles = today        # the tracker marks open positions from these
 
         fresh = []
         for sym, g in today.items():
@@ -322,10 +350,14 @@ class LiveEngine:
         if not rows:
             return []
 
-        scores = score_rows(self.model, self.features, rows)
+        frame = feature_frame(rows)
+        scores = score_frame(self.model, self.features, frame)
+        base_scores = (score_frame(self.baseline.model, self.baseline.features, frame)
+                       if self.baseline is not None else [None] * len(rows))
+        feature_rows = frame.to_dict("records")
 
         decisions = []
-        for sig, feats_row, sc in zip(meta, rows, scores):
+        for sig, sc, bsc, fv in zip(meta, scores, base_scores, feature_rows):
             self.seen.add((sig["date"], sig["symbol"], sig["direction"]))
 
             entry_at = dt.datetime.combine(day, dt.datetime.strptime(sig["time"], "%H:%M:%S").time(),
@@ -352,6 +384,13 @@ class LiveEngine:
                 "trail_distance": lv["trail_distance"],
                 "force_exit": lv["force_exit"],
                 "decided_at": now.strftime("%H:%M:%S"),
+                "target": lv["target"],
+                "model_version": self.version,
+                "baseline_version": self.baseline.version if self.baseline is not None else "",
+                "baseline_score": round(float(bsc), 4) if bsc is not None else None,
+                "baseline_threshold": round(self.baseline.threshold, 4) if self.baseline is not None else None,
+                "baseline_go": bool(bsc >= self.baseline.threshold) if bsc is not None else None,
+                "features": {k: (None if pd.isna(v) else float(v)) for k, v in fv.items()},
             })
 
         return decisions

@@ -1,0 +1,12 @@
+# /etc/systemd/system/orbital-challenger.timer — the first Saturday of every month, 07:00 IST
+# (days 1-7 that are a Saturday = the first weekend). Persistent: a missed run happens at boot.
+[Unit]
+Description=ORBITAL champion/challenger on the first weekend of each month
+
+[Timer]
+OnCalendar=Sat *-*-01..07 07:00:00 Asia/Kolkata
+Persistent=true
+Unit=orbital-challenger.service
+
+[Install]
+WantedBy=timers.target

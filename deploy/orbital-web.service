@@ -16,7 +16,7 @@ Environment=ORBITAL_DASHBOARD_PASSWORD_FILE=/home/ubuntu/.orbital_web_password
 # refuse to start without a password rather than serve the dashboard open
 Environment=ORBITAL_REQUIRE_LOGIN=1
 # trust Caddy's X-Forwarded-Proto (waitress drops untrusted proxy headers by default)
-ExecStart=/home/ubuntu/orbital/.venv/bin/waitress-serve --listen=127.0.0.1:5050 --threads=2 \
+ExecStart=/home/ubuntu/orbital/.venv/bin/waitress-serve --listen=127.0.0.1:5050 --threads=8 \
     --trusted-proxy=127.0.0.1 --trusted-proxy-headers=x-forwarded-proto webapp:app
 Restart=always
 RestartSec=5

@@ -4,6 +4,11 @@
 # COMPLETED candles, scores them with the trained model, and sends only the GO
 # decisions to Telegram — with the stop and trail the backtest assumed.
 #
+# Every signal, GO and NO-GO, is also logged and paper-tracked to its outcome
+# by shadow.py (the dashboard's Tracker and Scorecard). The champion model
+# decides GO; the frozen v2 baseline scores every signal alongside it
+# (registry.py).
+#
 # Signals only: ORBITAL sends alerts; it has no order path (dhan_client
 # refuses every non-market-data endpoint, and tests enforce it).
 #
@@ -22,9 +27,11 @@ import time
 import pandas as pd
 
 import dhan_client as dhan
+import registry
+import shadow
 import strategy_config as C
 from fetch_symbols import get_symbols
-from live_engine import (DhanSource, LiveEngine, load_bundle, load_snapshot, MODEL_FILE,
+from live_engine import (DhanSource, LiveEngine, load_snapshot, MODEL_FILE,
                          SNAPSHOT_FILE, latest_completed_session, take_session_snapshot)
 from mine_features import sector_map
 from notifier import (load_telegram_config, reset_sent_notifications_if_new_day,
@@ -44,6 +51,13 @@ SESSION_END = dt.time(15, 16)
 
 # Candles close on 5-minute boundaries; give Dhan a few seconds to publish.
 PUBLISH_DELAY = dt.timedelta(seconds=20)
+
+# After the last cycle the 15:15 candle (the forced exit) is still forming.
+# From CLOSING_PASS_AFTER the shadow tracker fetches the symbols that still
+# have open paper positions (only those) to complete them; from FINAL_PASS_AFTER
+# anything still open is closed at its last candle, as the backtest does.
+CLOSING_PASS_AFTER = dt.time(15, 20)
+FINAL_PASS_AFTER = dt.time(15, 40)
 
 # If no symbol has a single candle this long after the open, the exchange is
 # closed (holiday) — stop for the day instead of polling empty data.
@@ -153,7 +167,44 @@ def handle(decisions, lots, dry_run):
         )
 
 
-def run_cycle(engine, lots, dry_run, now=None):
+def track(book, decisions, engine, now):
+    """Shadow-log new signals and walk every open one forward. Never fatal."""
+    try:
+        book.record(decisions, now)
+        labels = book.update(engine.today_candles, now)
+        if labels:
+            print(f"   🧾 {len(labels)} paper outcome(s) labelled: " + ", ".join(
+                f"{l['signal_id'].split('|')[1]} {l['status']} {float(l['pnl_pct']):+.2f}%" for l in labels[:6]))
+    except Exception as e:                       # tracking must never stop the signal bot
+        print(f"⚠️ shadow tracking failed this cycle: {type(e).__name__}: {e}")
+
+
+def closing_pass(book, engine, now):
+    """After the close: complete open paper positions from their own candles."""
+    try:
+        if book.day != now.date():
+            book.load(now.date())
+        symbols = book.open_symbols()
+        if not symbols:
+            return 0
+        final = now.time() >= FINAL_PASS_AFTER
+        candles = {}
+        for sym in symbols:
+            try:
+                candles[sym] = engine.source.today(sym, now.date(), now)
+            except dhan.DhanError as e:
+                if "credentials" in str(e):
+                    raise
+        labels = book.update(candles, now, final=final)
+        print(f"🧾 closing pass ({'final' if final else 'waiting for the 15:15 candle'}): "
+              f"{len(symbols)} open, {len(labels)} labelled, {len(book.open_symbols())} still open")
+        return len(labels)
+    except dhan.DhanError as e:
+        print(f"⚠️ closing pass failed: {e}")
+        return 0
+
+
+def run_cycle(engine, lots, dry_run, now=None, book=None):
     now = now or now_ist()
     day = now.date()
 
@@ -184,6 +235,8 @@ def run_cycle(engine, lots, dry_run, now=None):
     if not decisions:
         print("   no new signals")
     handle(decisions, lots, dry_run)
+    if book is not None:
+        track(book, decisions, engine, now)
 
     if not dry_run:
         update_current_prices(day)
@@ -235,9 +288,11 @@ def main():
         print(f"❌ No model at {MODEL_FILE}. Train one: python walk_forward.py --train-live")
         return 1
 
-    model, feats, threshold, info = load_bundle()
-    print(f"🧠 Model trained through {info.get('trained_through', '?')}, "
-          f"threshold {threshold:.3f}, {len(feats)} features")
+    baseline = registry.baseline()
+    champ = registry.champion()
+    print(f"🧠 Champion {champ.version}: trained through {champ.trained_through or '?'}, "
+          f"threshold {champ.threshold:.3f}, {len(champ.features)} features")
+    print(f"🧊 Baseline {baseline.version} (frozen) scores every signal alongside it")
 
     if not a.dry_run:
         try:
@@ -246,8 +301,14 @@ def main():
             print(f"❌ Telegram config invalid: {e}")
             return 1
 
-    engine = LiveEngine(DhanSource(), model, feats, threshold, get_symbols(), sector_map())
+    engine = LiveEngine(DhanSource(), champ.model, champ.features, champ.threshold,
+                        get_symbols(), sector_map(), version=champ.version, baseline=baseline)
     lots = lot_sizes()
+    if a.dry_run:
+        dry = shadow.LIVE_DIR / "dryrun"
+        book = shadow.ShadowBook(dry / "shadow_signals.csv", dry / "shadow_outcomes.csv", dry / "tracker.json")
+    else:
+        book = shadow.ShadowBook()
 
     while True:
         now = now_ist()
@@ -255,7 +316,7 @@ def main():
 
         if in_session:
             try:
-                run_cycle(engine, lots, a.dry_run, now)
+                run_cycle(engine, lots, a.dry_run, now, book)
                 # Only a holiday if stocks WERE prepared and none printed a candle —
                 # zero prepared stocks is a data problem, not a closed exchange.
                 if (now.time() >= HOLIDAY_CHECK_AFTER and engine.prev
@@ -271,6 +332,8 @@ def main():
                 print(f"⚠️ data error this cycle, will retry: {e}")
         else:
             print(f"⏸️  {now.strftime('%a %H:%M')} — outside the trading window")
+            if now.weekday() < 5 and now.time() >= CLOSING_PASS_AFTER:
+                closing_pass(book, engine, now)
             if now.time() >= dt.time(15, 40) or now.time() < dt.time(9, 0):
                 ensure_snapshot(engine.symbols, now)
                 if a.session and now.time() >= dt.time(15, 40):
