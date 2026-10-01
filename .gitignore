@@ -35,3 +35,6 @@ __pycache__/
 *.png
 !static/figures/*.png
 *.pdf
+
+# --- private notes (the repo is public) --------------------------------------
+docs/INTERVIEW_PREP.md
