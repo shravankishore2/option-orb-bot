@@ -203,10 +203,10 @@
             {% if side.n %}{{ "%.0f"|format(side.hit_rate) }}%{% else %}—{% endif %}
         {%- endmacro %}
         {% macro avg(v) -%}
-            {% if v is not none %}<span class="{{ 'pos' if v >= 0 else 'neg' }}">{{ "%+.3f"|format(v) }}%</span>{% else %}—{% endif %}
+            {% if v is not none %}<em class="{{ 'pos' if v >= 0 else 'neg' }}">{{ "%+.3f"|format(v) }}%</em>{% else %}—{% endif %}
         {%- endmacro %}
         {% macro n(side) -%}
-            {{ side.n }}{% if side.too_few %} <span class="few" title="fewer than {{ sc.min_sample }} signals — too few to read">too few</span>{% endif %}
+            {{ side.n }}{% if side.too_few %} <em class="few" title="fewer than {{ sc.min_sample }} signals — too few to read">too few</em>{% endif %}
         {%- endmacro %}
 
         <h3 class="sub">Cumulative · {{ sc.card.first }} → {{ sc.card.last }}</h3>

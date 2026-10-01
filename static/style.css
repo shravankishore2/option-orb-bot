@@ -876,3 +876,4 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .stat-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
 h3.sub { margin: 22px 2px 10px; font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted-2); }
 .filter-strip button.time-btn { font: inherit; cursor: pointer; }
+em.few, em.pos, em.neg { font-style: normal; }
