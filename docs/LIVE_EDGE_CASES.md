@@ -54,6 +54,14 @@ handling rule and, where it can be tested offline, a test in `tests/`.
 | 35 | XGBoost is not bitwise reproducible across CPU architectures: the same data and recipe on the x86 VM gives threshold 0.64461 vs 0.64406, 99.1% of decisions the same but only 1,832 of ~2,330 GO picks shared | Models record their platform; challengers always train on the VM; the held-out comparison decides | same test (tolerance off arm64) |
 | 36 | Dhan rejects a dead token on `/charts/*` with HTTP 400 DH-906 "Invalid Token", not 401 — read as a data error, so the bot would neither wait for a refresh nor alert | 400 DH-906 (token) / DH-901 treated like 401 | `test_token_rejection_in_any_form_waits_for_the_refresher` |
 
+## Model updates and drift (2026-10-02)
+
+| # | Issue | Handling | Test |
+|---|---|---|---|
+| 37 | One held-out month has only ~15-20 GO trades, so a 30-trade minimum never decided anything | Pool the most recent months until both models have >= 30 GO trades on one window; the challenger is retrained before the window each time; pooled months logged | `test_months_are_pooled_until_both_models_have_30_go_trades` |
+| 38 | Pooling could reach sessions the champion trained on | Pooling stops at the champion's `trained_through` | `test_pooling_never_reaches_into_the_champions_training` |
+| 39 | A plain PSI >= 0.25 rule flagged 20 of 28 inputs on a single live day: market-wide inputs are near-constant within a day | Flag only if PSI also beats the 95th percentile of same-length historical windows (16 Sep: 20 → 1) | `test_a_day_level_feature_is_not_flagged_for_being_constant_within_days` |
+
 ## Edge cases and how they're handled
 
 | Situation | Handling |

@@ -24,11 +24,11 @@ def sessions(start, n):
     return out
 
 
-def dataset(n_train_days=250, per_day=50, seed=0):
+def dataset(n_train_days=250, per_day=50, seed=0, start=dt.date(2025, 9, 1)):
     """Signals whose P&L is driven by the first feature (learnable)."""
     rng = np.random.default_rng(seed)
-    days = sessions(dt.date(2025, 9, 1), n_train_days) + sessions(dt.date(2026, 9, 1), 22)
-    days = [d for d in days if d < "2026-10-01"]
+    days = sessions(start, n_train_days) + sessions(dt.date(2026, 9, 1), 22)
+    days = sorted({d for d in days if d < "2026-10-01"})
     rows = len(days) * per_day
     df = pd.DataFrame(rng.normal(size=(rows, len(F))), columns=F)
     df["date"] = np.repeat(days, per_day)
@@ -124,12 +124,44 @@ def test_comparison_is_logged_when_the_champion_is_kept(reg, monkeypatch):
 
 
 def test_window_excludes_sessions_the_champion_trained_on(reg, monkeypatch):
+    """The champion trained through 22 Sep: only 23-30 Sep is out-of-sample for it, pooling
+    can't reach further back, and 6 sessions are too few — so nothing is decided."""
     champ = Fixed(trained_through="2026-09-22")
     monkeypatch.setattr(registry, "champion", lambda: champ)
     monkeypatch.setattr(registry, "baseline", lambda: champ)
     r = Ch.run(dt.date(2026, 10, 3), data=dataset(), cv=False, dry_run=True)
-    assert r["window"][0] > "2026-09-22"
+    assert r["window"] is None and not r["would_promote"] and "too few" in r["reason"]
+    assert [a["from"] for a in r["pooling"]] == ["2026-09"]           # stopped at the boundary
+    assert r["pooling"][0]["sessions"] == 6
     assert not list(reg.iterdir())                                     # dry run writes nothing
+
+
+def test_months_are_pooled_until_both_models_have_30_go_trades(reg, monkeypatch):
+    champ = Fixed(trained_through="2026-02-28", threshold=0.98)
+    monkeypatch.setattr(registry, "champion", lambda: champ)
+    monkeypatch.setattr(registry, "baseline", lambda: champ)
+    data = dataset(n_train_days=520, per_day=30, start=dt.date(2024, 9, 2))
+    r = Ch.run(dt.date(2026, 10, 3), data=data, cv=False)
+    months = r["pooled_months"]
+    assert len(months) > 1 and months[-1] == "2026-09"                 # one month alone was too few
+    assert months == sorted(months) and len(r["pooling"]) >= len(months)
+    assert r["challenger_metrics"]["go_trades"] >= 30 and r["champion_metrics"]["go_trades"] >= 30
+    assert r["train_through"] < r["window"][0]                         # the window was never trained on
+    assert r["window"][0][:7] == months[0]
+    assert registry.comparisons()[0]["pooled_months"] == months        # logged
+    meta = json.loads((reg / "c2026-10.json").read_text())
+    assert meta["pooled_months"] == months and meta["trained_through"] < r["window"][0]
+
+
+def test_pooling_never_reaches_into_the_champions_training(reg, monkeypatch):
+    champ = Fixed(trained_through="2026-07-15", threshold=0.98)
+    monkeypatch.setattr(registry, "champion", lambda: champ)
+    monkeypatch.setattr(registry, "baseline", lambda: champ)
+    r = Ch.run(dt.date(2026, 10, 3), data=dataset(n_train_days=520, per_day=30, start=dt.date(2024, 9, 2)), cv=False, dry_run=True)
+    tried = [a["from"] for a in r["pooling"]]
+    assert "2026-06" not in tried and tried[-1] >= "2026-07"
+    if r["window"]:
+        assert r["window"][0] > "2026-07-15"
 
 
 def test_shadow_rows_join_history_with_their_labels(tmp_path):

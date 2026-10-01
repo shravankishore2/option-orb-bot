@@ -178,7 +178,11 @@ def main():
             md += lines
 
     (BASE_DIR / "docs").mkdir(exist_ok=True)
-    (BASE_DIR / "docs" / "RESULTS.md").write_text("\n".join(md))
+    results = BASE_DIR / "docs" / "RESULTS.md"
+    old = results.read_text() if results.exists() else ""
+    drift = (old[old.index("<!-- drift:start -->"):old.index("<!-- drift:end -->") + len("<!-- drift:end -->")]
+             if "<!-- drift:start -->" in old and "<!-- drift:end -->" in old else "")
+    results.write_text("\n".join(md) + ("\n\n" + drift + "\n" if drift else ""))   # keep drift.py's live section
     (R / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
     # aggregate numbers only — published with the repo for the deployed dashboard
     (BASE_DIR / "docs" / "summary.json").write_text(json.dumps(summary, indent=2, default=str))

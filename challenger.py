@@ -9,15 +9,17 @@ Run on the first weekend of each month (deploy/orbital-challenger.timer):
   2. Leakage checks: inputs are exactly the model's features, none of them a
      label; every shadow label was written after its exit; no duplicate signals;
      the challenger never sees the held-out month.
-  3. Held-out month = the last complete calendar month. A challenger is
-     trained, with the same recipe as walk_forward.py (fit on older sessions,
-     threshold from the newest 15%), on everything BEFORE that month, and its
+  3. Held-out window: start with the last complete calendar month and pool
+     earlier months, newest first, until champion AND challenger each have at
+     least MIN_GO_TRADES (30) GO trades on the same window — a single month
+     has only ~15-20. Only sessions the champion never trained on count, and
+     the challenger is retrained each time the window grows, on everything
+     BEFORE the window (walk_forward.py's recipe), so the whole window is
+     excluded from both models' training. The pooled months are logged.
+  4. Compared on GO-trade P&L per trade at every cost level in
+     strategy_config.COST_SENSITIVITY (the RESULTS.md sensitivity); promote
+     only if the challenger is better at every level. The challenger's
      date-grouped 5-fold CV AUC is logged.
-  4. Champion and challenger score the held-out month — only the sessions that
-     are out-of-sample for the champion too. Compared on GO-trade P&L per
-     trade at every cost level in strategy_config.COST_SENSITIVITY (the
-     RESULTS.md sensitivity). Promote only if the challenger is better at
-     every level and both have at least MIN_GO_TRADES GO trades.
   5. Logged to models/registry/comparisons.jsonl either way. On promotion the
      same recipe is refit on all labelled data through the held-out month and
      becomes the champion; the evaluated challenger is kept too. The frozen v2
@@ -46,6 +48,7 @@ HISTORY = BASE_DIR / "data" / "training" / "history.csv.gz"
 FEATURES = shadow.FEATURE_COLUMNS
 KEYS = ["date", "symbol", "direction"]
 MIN_GO_TRADES = shadow.MIN_SAMPLE          # 30: fewer GO trades than this decide nothing
+MAX_POOLED_MONTHS = 12                     # pool at most a year of held-out months
 OUTCOME_COLUMNS = set(LABELS) | {"pnl_%", "profit", "exit_reason", "exit_time", "exit_price",
                                  "status", "labelled_at", "mfe_pct", "mae_pct"}
 CV_FOLDS = 5
@@ -159,6 +162,68 @@ def held_out_month(today):
     return last.replace(day=1), last
 
 
+class _Fresh:
+    """A just-trained model, duck-typed like registry.Model."""
+
+    def __init__(self, model, threshold):
+        self.model, self.features, self.threshold = model, FEATURES, threshold
+
+
+def month_starts_back(last_start, n):
+    """[last_start, the month before, ...] — n month starts, newest first."""
+    out, m = [], last_start
+    for _ in range(n):
+        out.append(m)
+        m = (m - dt.timedelta(days=1)).replace(day=1)
+    return out
+
+
+def pooled_comparison(df, champ, last_start, last_end, min_trades=MIN_GO_TRADES, max_months=MAX_POOLED_MONTHS):
+    """Pool held-out months, newest first, until champion AND challenger each have
+    `min_trades` GO trades on the same window.
+
+    The window is every session from the earliest pooled month to `last_end`
+    that is out-of-sample for the champion (after its trained_through). The
+    challenger is retrained each time the window grows, on data strictly before
+    the window — so neither model has seen any of it. Pooling stops at the
+    champion's training boundary. Returns (model, threshold, info, window,
+    train, attempts); model is None if no window had enough GO trades.
+    """
+    import walk_forward as W
+    oos_after = str(champ.trained_through or "")
+    e = last_end.isoformat()
+    attempts, best = [], None
+    for first in month_starts_back(last_start, max_months):
+        last_day = (first + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
+        if oos_after and last_day.isoformat() <= oos_after:
+            break                                              # the champion trained on this whole month
+        s = first.isoformat()
+        window = df[(df["date"] >= s) & (df["date"] <= e) & (df["date"] > oos_after)]
+        months = sorted(window["date"].str[:7].unique())
+        n_champ = int((score(champ, window) >= champ.threshold).sum()) if not window.empty else 0
+        attempt = {"from": f"{first:%Y-%m}", "months": months, "sessions": int(window["date"].nunique()),
+                   "champion_go": n_champ, "challenger_go": None}
+        attempts.append(attempt)
+        if window.empty or n_champ < min_trades:               # no need to train yet
+            continue
+        start = window["date"].min()
+        train = df[df["date"] < start]
+        if len(train) < C.MIN_TRAIN_SIGNALS:
+            attempt["stopped"] = f"only {len(train):,} training signals before {start} (need {C.MIN_TRAIN_SIGNALS:,})"
+            break
+        check_leakage(train, FEATURES, start)
+        model, thr, info = W.fit_with_threshold(train, FEATURES)
+        n_chall = int((score(_Fresh(model, thr), window) >= thr).sum())
+        attempt["challenger_go"] = n_chall
+        best = (model, thr, info, window, train)
+        if n_chall >= min_trades:
+            return model, thr, info, window, train, attempts
+    if best is None:
+        return None, None, None, None, None, attempts
+    model, thr, info, window, train = best                    # largest window tried: decide() reports "too few"
+    return model, thr, info, window, train, attempts
+
+
 def run(today=None, dry_run=False, force=False, data=None, cv=True):
     today = today or dt.date.today()
     start, end = held_out_month(today)
@@ -174,37 +239,34 @@ def run(today=None, dry_run=False, force=False, data=None, cv=True):
     print(f"📦 {len(df):,} labelled signals ({(df['source'] == 'history').sum():,} history, "
           f"{df['source'].str.startswith('shadow').sum():,} shadow), {df['date'].min()} → {df['date'].max()}")
 
-    s, e = start.isoformat(), end.isoformat()
-    oos_after = max(str(champ.trained_through or ""), "")
-    window = df[(df["date"] >= s) & (df["date"] <= e) & (df["date"] > oos_after)]
-    train = df[df["date"] < s]
-    check_leakage(train, FEATURES, s)
-
+    model, thr, info, window, train, attempts = pooled_comparison(df, champ, start, end)
     record = {"run_at": dt.datetime.now().isoformat(timespec="seconds"), "held_out_month": month,
-              "window": [window["date"].min(), window["date"].max()] if not window.empty else None,
-              "window_sessions": int(window["date"].nunique()),
-              "champion": champ.version, "baseline": base.version,
-              "train_rows": len(train), "train_through": train["date"].max() if len(train) else None,
+              "champion": champ.version, "baseline": base.version, "pooling": attempts,
+              "pooled_months": sorted(window["date"].str[:7].unique()) if window is not None else [],
+              "window": [window["date"].min(), window["date"].max()] if window is not None else None,
+              "window_sessions": int(window["date"].nunique()) if window is not None else 0,
+              "train_rows": len(train) if train is not None else 0,
+              "train_through": train["date"].max() if train is not None and len(train) else None,
               "dry_run": dry_run}
 
-    if len(train) < C.MIN_TRAIN_SIGNALS or window.empty:
-        record.update(promoted=False, reason=("no held-out sessions out-of-sample for the champion"
-                                              if window.empty else "not enough training data"))
+    if model is None:
+        best = max(attempts, key=lambda a: a["champion_go"], default=None)
+        stopped = next((a["stopped"] for a in attempts if a.get("stopped")), None)
+        record.update(promoted=False, would_promote=False, reason=(
+            "no held-out sessions out-of-sample for the champion" if not best or not best["sessions"] else
+            f"not enough training data: {stopped}" if stopped else
+            f"too few GO trades to judge even pooling {len(best['months'])} month(s) "
+            f"{', '.join(best['months'])} (champion {best['champion_go']}; need {MIN_GO_TRADES})"))
         return _finish(record, dry_run)
 
     import walk_forward as W
-    model, thr, info = W.fit_with_threshold(train, FEATURES)
     record["cv"] = grouped_cv_auc(train, FEATURES) if cv else None
-
-    class _Fresh:                                         # duck-typed like registry.Model
-        pass
-    chall = _Fresh()
-    chall.model, chall.features, chall.threshold = model, FEATURES, thr
-
+    chall = _Fresh(model, thr)
     m_champ = go_metrics(window, score(champ, window), champ.threshold)
     m_chall = go_metrics(window, score(chall, window), thr)
     m_base = go_metrics(window, score(base, window), base.threshold)
     promote, reason = decide(m_champ, m_chall)
+    reason += f" (pooled {', '.join(record['pooled_months'])})"
     record.update(champion_metrics=m_champ, challenger_metrics=m_chall, baseline_metrics=m_base,
                   promoted=promote and not dry_run, would_promote=promote, reason=reason)
 
@@ -212,14 +274,15 @@ def run(today=None, dry_run=False, force=False, data=None, cv=True):
         evaluated = registry.save_model(f"c{today:%Y-%m}", model, FEATURES, thr, {
             "role": "challenger (held-out evaluation)", "trained_through": record["train_through"],
             "trained_from": train["date"].min(), "rows": len(train), **info,
+            "pooled_months": record["pooled_months"],
             "label": C.LABEL, "config_sha256": registry.sha256(BASE_DIR / "strategy_config.py")})
         record["challenger"] = evaluated.version
         if promote:
-            full = df[df["date"] <= e]
+            full = df[df["date"] <= end.isoformat()]
             check_leakage(full, FEATURES, (end + dt.timedelta(days=1)).isoformat())
             m2, thr2, info2 = W.fit_with_threshold(full, FEATURES)
             live = registry.save_model(version, m2, FEATURES, thr2, {
-                "role": "champion (refit through the held-out month)",
+                "role": "champion (refit through the held-out window)",
                 "trained_through": full["date"].max(), "trained_from": full["date"].min(),
                 "rows": len(full), **info2, "label": C.LABEL, "evaluated_as": evaluated.version,
                 "config_sha256": registry.sha256(BASE_DIR / "strategy_config.py")})
@@ -239,7 +302,7 @@ def _finish(record, dry_run):
                                              if p is not None else "no trades"))
     print(f"🏁 {record['held_out_month']}: champion {record['champion']} [{fmt(record.get('champion_metrics'))}] "
           f"vs challenger [{fmt(record.get('challenger_metrics'))}] → "
-          f"{'PROMOTED ' + record.get('new_champion', '') if record.get('promoted') else 'kept champion'}: "
+          f"{'PROMOTED ' + record.get('new_champion', '') if record.get('promoted') else 'WOULD PROMOTE' if record.get('would_promote') else 'kept champion'}: "
           f"{record['reason']}" + ("  (dry run — nothing changed)" if dry_run else ""))
     return record
 

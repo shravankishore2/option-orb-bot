@@ -94,11 +94,19 @@ not config:
 - **Champion / challenger, monthly** (`challenger.py`, `registry.py`). On the
   first Saturday of each month a challenger is trained on all labelled data.
   It uses the walk-forward recipe, with date-grouped CV and leakage checks.
-  It is promoted only if it beats the champion on the last complete month, per
-  GO trade, at every cost level in RESULTS.md, with at least 30 GO trades
-  each. Every comparison is logged. The **v2 model stays frozen** as a
+  It is compared with the champion on held-out months: the most recent
+  complete months are pooled until both have at least 30 GO trades on the same
+  window, and that whole window is excluded from both models' training. It is
+  promoted only if it is better per GO trade at every cost level in RESULTS.md.
+  The pooled months are logged. Every comparison is logged. The **v2 model stays frozen** as a
   baseline that scores every signal, and every signal records which versions
   scored it.
+- **Weekly skew check** (`drift.py`, Saturdays). It compares live feature and
+  score distributions with the training data, using PSI and Kolmogorov–Smirnov,
+  and the live GO rate with the designed 2%. A feature counts as drifted only if
+  its PSI also beats what a random stretch of history of the same length shows,
+  because market-wide inputs barely vary within a day. Results go to the
+  scorecard and RESULTS.md.
 - Sessions before tracking began were replayed through the live engine
   (`shadow_backfill.py`) and are marked `replay`.
 

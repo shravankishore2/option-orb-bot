@@ -1,0 +1,12 @@
+# /etc/systemd/system/orbital-drift.timer — every Saturday 08:30 IST (after the first-Saturday
+# challenger run at 07:00). The first run with data is the Saturday after the first full live week.
+[Unit]
+Description=ORBITAL weekly skew check, Saturdays
+
+[Timer]
+OnCalendar=Sat *-*-* 08:30:00 Asia/Kolkata
+Persistent=true
+Unit=orbital-drift.service
+
+[Install]
+WantedBy=timers.target

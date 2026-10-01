@@ -246,6 +246,30 @@
         </div>
         {% endif %}
 
+        <h3 class="sub">Training / serving skew (weekly)</h3>
+        {% set dr = sc.drift %}
+        {% if not dr %}
+        <div class="empty-state">The weekly skew check runs on Saturdays once there is a full week of live signals.</div>
+        {% elif dr.status != "ok" %}
+        <p class="footnote">{{ dr.run_at[:10] }}: {{ dr.status }}.</p>
+        {% else %}
+        {% set g = dr.go_rate.champion %}{% set b = dr.go_rate.baseline %}
+        <section class="stats-row">
+            <div class="stat-card"><span>LIVE GO RATE</span><strong class="{{ '' if g.consistent_with_design else 'amber' }}">{{ "%.1f"|format(g.rate * 100) }}%</strong>
+                <small>{{ g.go }}/{{ g.signals }} · 95% CI {{ "%.1f"|format(g.ci95[0] * 100) }}–{{ "%.1f"|format(g.ci95[1] * 100) }}% · designed {{ "%.0f"|format(g.designed * 100) }}%</small></div>
+            <div class="stat-card"><span>V2 BASELINE GO RATE</span><strong>{{ "%.1f"|format(b.rate * 100) }}%</strong><small>{{ b.go }}/{{ b.signals }}</small></div>
+            {% if dr.score.psi is not none %}
+            <div class="stat-card"><span>SCORE DRIFT (PSI)</span><strong class="{{ 'amber' if dr.score.psi >= 0.25 else '' }}">{{ "%.3f"|format(dr.score.psi) }}</strong>
+                <small>median live {{ "%.3f"|format(dr.score.live_median) }} vs {{ "%.3f"|format(dr.score.reference_median) }}</small></div>
+            {% endif %}
+            <div class="stat-card"><span>DRIFTED FEATURES</span><strong class="{{ 'amber' if dr.drifted else 'green' }}">{{ dr.drifted|length }}</strong>
+                <small>of 28 · PSI ≥ 0.25 · {{ dr.moderate|length }} moderate</small></div>
+        </section>
+        <p class="footnote">{{ dr.run_at[:10] }} · {{ dr.live_signals }} live signals over {{ dr.live_sessions }} sessions vs {{ "{:,}".format(dr.reference_rows) }} training signals.
+            Drifted: {{ dr.drifted|join(", ") or "none" }}. Moderate: {{ dr.moderate|join(", ") or "none" }}.
+            Score reference: {{ dr.score.reference }}.</p>
+        {% endif %}
+
         <h3 class="sub">Model updates</h3>
         <p class="footnote">Champion <strong>{{ sc.versions.champion }}</strong>
             {% if sc.versions.champion_thr %}(GO ≥ {{ "%.3f"|format(sc.versions.champion_thr) }}, trained through {{ sc.versions.champion_trained }}){% endif %}

@@ -1,0 +1,20 @@
+# /etc/systemd/system/orbital-drift.service — weekly training/serving skew check: live feature
+# and score distributions vs the training data, and the live GO rate vs the designed 2%.
+# Writes data/live/drift.json (dashboard scorecard) and the drift section of docs/RESULTS.md.
+# Does nothing until a full week (5 sessions) of live shadow signals exists.
+[Unit]
+Description=ORBITAL weekly training/serving skew check
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/orbital
+Environment=PYTHONUNBUFFERED=1 TZ=Asia/Kolkata OMP_NUM_THREADS=1
+ExecStart=/home/ubuntu/orbital/.venv/bin/python -u drift.py
+MemoryHigh=350M
+MemoryMax=450M
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+SyslogIdentifier=orbital-drift

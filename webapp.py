@@ -599,7 +599,8 @@ def scorecard_view(by):
     scored_by = (df["model_version"].value_counts().to_dict() if not df.empty else {})
     return {"by": by, "card": card, "open": open_n, "labelled": len(df), "versions": versions,
             "scored_by": scored_by, "min_sample": shadow.MIN_SAMPLE, "costs": C.COST_SENSITIVITY,
-            "comparisons": list(reversed(registry.comparisons()))[:12]}
+            "comparisons": list(reversed(registry.comparisons()))[:12],
+            "drift": read_json(str(shadow.LIVE_DIR / "drift.json"))}
 
 
 @app.route("/scorecard")
