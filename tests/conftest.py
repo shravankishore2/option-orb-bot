@@ -56,5 +56,8 @@ def breakout_day(day):
 
 
 def data_dir_has_cache():
-    return os.path.exists(os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                       "data", "history", "RELIANCE_5m.csv.gz"))
+    """The research machine: candle cache AND research outputs. (The VM has the
+    live bot's candle cache but no data/research/, and must not call Dhan from tests.)"""
+    root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+    return (os.path.exists(os.path.join(root, "history", "RELIANCE_5m.csv.gz"))
+            and os.path.exists(os.path.join(root, "research", "walkforward.csv")))

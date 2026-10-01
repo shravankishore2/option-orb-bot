@@ -140,11 +140,21 @@ def test_shadow_rows_join_history_with_their_labels(tmp_path):
 
 
 @pytest.mark.skipif(not Ch.HISTORY.exists(), reason="needs data/training/history.csv.gz")
-def test_the_recipe_on_the_history_table_reproduces_v2_exactly():
-    """Same data + same recipe = the registered v2 model, bit for bit — so a
-    challenger differs from v2 only by the data it adds."""
+def test_the_recipe_on_the_history_table_reproduces_v2():
+    """Same data + same recipe = the registered v2 model: bit for bit on the
+    architecture v2 was trained on (Apple arm64), and within floating-point
+    drift elsewhere (the VM is x86: XGBoost isn't bitwise reproducible across
+    CPU architectures). So a challenger differs from v2 by its data, plus — when
+    trained on another architecture — that drift."""
+    import platform
     import walk_forward as W
     df = Ch.labelled_data(shadow_rows=pd.DataFrame())
     df = df[df["date"] <= "2026-09-22"]
-    _, thr, _ = W.fit_with_threshold(df, F)
-    assert thr == registry.baseline().threshold
+    model, thr, _ = W.fit_with_threshold(df, F)
+    v2 = registry.baseline()
+    if platform.machine() == "arm64":
+        assert thr == v2.threshold
+    else:
+        X = df[F].fillna(0)
+        same = ((model.predict_proba(X)[:, 1] >= thr) == (v2.model.predict_proba(X)[:, 1] >= v2.threshold)).mean()
+        assert abs(thr - v2.threshold) < 0.002 and same > 0.98

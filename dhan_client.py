@@ -57,6 +57,19 @@ class DhanError(RuntimeError):
     """Raised when Dhan rejects a request or credentials are unusable."""
 
 
+def _token_rejected(response):
+    """Dhan rejects a bad token with 401/403 on some endpoints but HTTP 400 on
+    others: /charts/* answers 400 {"errorCode": "DH-906", "errorMessage":
+    "Invalid Token"} (seen 2026-10-02), and DH-901 is "invalid or expired access
+    token". All of these mean "get a new token", not "bad data"."""
+    if response.status_code in (401, 403):
+        return True
+    if response.status_code != 400:
+        return False
+    text = response.text or ""
+    return "DH-901" in text or ("DH-906" in text and "token" in text.lower())
+
+
 def _no_data(err):
     """Dhan answers a range with no candles (e.g. a daily bar it hasn't
     published yet) with HTTP 400 DH-907 instead of an empty list."""
@@ -312,7 +325,7 @@ def _post(path, payload, retries=5):
             time.sleep(1.0 * (attempt + 1))
             continue
 
-        if response.status_code in (401, 403):
+        if _token_rejected(response):
             if token_file_path() is not None and not reauthed:
                 token, client_id = load_dhan_config(reject=token)
                 reauthed = True

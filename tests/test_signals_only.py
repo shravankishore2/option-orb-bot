@@ -158,3 +158,29 @@ def test_orbital_never_writes_the_shared_token(token_file, monkeypatch):
     assert token_file.stat().st_mtime_ns == before
     src = (ROOT / "dhan_client.py").read_text()
     assert "generate_token" not in src and "/login" not in src
+
+
+@pytest.mark.parametrize("status,body", [
+    (400, {"errorType": "Order_Error", "errorCode": "DH-906", "errorMessage": "Invalid Token"}),
+    (400, {"errorType": "Invalid_Authentication", "errorCode": "DH-901", "errorMessage": "expired"}),
+    (401, {}),
+])
+def test_token_rejection_in_any_form_waits_for_the_refresher(status, body, token_file, monkeypatch, no_network):
+    """Dhan's charts API rejects a dead token with HTTP 400 DH-906, not 401 — it
+    must still be treated as "get a new token", never as a data error."""
+    write_token(token_file, "tok-A")
+    seen = []
+
+    def fake_post(url, headers, json, timeout):
+        seen.append(headers["access-token"])
+        if headers["access-token"] == "tok-A":
+            write_token(token_file, "tok-B")
+            return Response(status, body)
+        return Response(200, {"ok": True})
+    monkeypatch.setattr(dhan._session, "post", fake_post)
+    assert dhan._post("/charts/historical", {}) == {"ok": True}
+    assert seen == ["tok-A", "tok-B"]
+
+
+def test_no_data_400_is_not_a_token_problem():
+    assert not dhan._token_rejected(Response(400, {"errorCode": "DH-907", "errorMessage": "No data"}))

@@ -50,7 +50,9 @@ handling rule and, where it can be tested offline, a test in `tests/`.
 | 31 | A label written before the outcome was known would leak into training | Labels only after the exit candle completes (asserted); written once; training reads only `shadow_outcomes.csv` | `test_label_appears_only_once_the_exit_candle_has_closed`, `test_no_label_while_open_and_none_from_a_forming_candle` |
 | 32 | The 15:15 exit candle completes after the last cycle (15:15:20) | Closing pass from 15:20 fetches only symbols with open paper positions; at 15:40 anything still open closes at its last candle ("LAST", as the backtest does) | `test_open_position_is_closed_at_its_last_candle_after_the_close` |
 | 33 | A promoted model would end the v2 forward test | v2 is frozen as a baseline that scores every signal; its decisions are logged separately | `test_every_signal_records_versions_scores_and_features_at_signal_time` |
-| 34 | Exporting the history at 6 significant digits changed the refit (threshold 0.64436 vs 0.64406) | Full-precision export; refit reproduces v2 bit for bit | `test_the_recipe_on_the_history_table_reproduces_v2_exactly` |
+| 34 | Exporting the history at 6 significant digits changed the refit (threshold 0.64436 vs 0.64406) | Full-precision export; refit reproduces v2 bit for bit on arm64 | `test_the_recipe_on_the_history_table_reproduces_v2` |
+| 35 | XGBoost is not bitwise reproducible across CPU architectures: the same data and recipe on the x86 VM gives threshold 0.64461 vs 0.64406, 99.1% of decisions the same but only 1,832 of ~2,330 GO picks shared | Models record their platform; challengers always train on the VM; the held-out comparison decides | same test (tolerance off arm64) |
+| 36 | Dhan rejects a dead token on `/charts/*` with HTTP 400 DH-906 "Invalid Token", not 401 — read as a data error, so the bot would neither wait for a refresh nor alert | 400 DH-906 (token) / DH-901 treated like 401 | `test_token_rejection_in_any_form_waits_for_the_refresher` |
 
 ## Edge cases and how they're handled
 

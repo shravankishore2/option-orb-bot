@@ -97,8 +97,11 @@ def save_model(version, model, features, threshold, meta):
     if path.exists():
         raise FileExistsError(f"{path} exists — model versions are never overwritten")
     path.write_bytes(pickle.dumps({"model": model, "features": list(features), "threshold": float(threshold)}))
+    import platform
+    # XGBoost is deterministic on one machine but not across CPU architectures
+    # (same data, ARM vs x86: ~1% of GO/SKIP decisions differ), so record where.
     meta = {**meta, "version": version, "sha256": sha256(path), "threshold": float(threshold),
-            "features": list(features)}
+            "features": list(features), "platform": f"{platform.system()}-{platform.machine()}"}
     _atomic_write(path.with_suffix(".json"), json.dumps(meta, indent=2, default=str))
     return Model(version, path, meta)
 
