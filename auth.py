@@ -29,6 +29,17 @@ def configured_password():
     return pw
 
 
+def signing_key(password, secret=None):
+    """Key for session cookies. ORBITAL_DASHBOARD_SECRET wins if set; otherwise the key is
+    derived from the password, so sessions survive restarts and reboots and changing the
+    password logs every browser out. No password (local use): a random per-process key."""
+    if secret:
+        return secret.encode()
+    if password:
+        return hmac.new(password.encode(), b"orbital-session", hashlib.sha256).digest()
+    return None
+
+
 class SessionSigner:
     def __init__(self, key=None, ttl_s=12 * 3600, clock=time.time):
         self.key = key or secrets.token_bytes(32)

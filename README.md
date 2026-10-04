@@ -170,7 +170,7 @@ On a small VM, alongside another service that shares the Dhan account
 |---|---|
 | `orbital.timer` → `orbital.service` | 09:15 IST on NSE trading days (holiday calendar via `ExecCondition`); `main.py --session`; restarts on failure; memory-capped |
 | `orbital-web.service` | Dashboard under waitress on 127.0.0.1:5050, always on |
-| `Caddyfile.orbital` | HTTPS in front of the dashboard; the dashboard has its own password page (`auth.py`: signed HttpOnly session cookie, lockout after 5 wrong tries) |
+| `Caddyfile.orbital` | HTTPS in front of the dashboard; the dashboard has its own password page (`auth.py`: signed HttpOnly session cookie that lasts 30 days and survives restarts, lockout after 5 wrong tries) |
 
 Dhan's 5 requests/s limit is per account, so on a shared account ORBITAL runs
 at 3/s (`rate_per_sec`) and stays silent around each minute boundary

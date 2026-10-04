@@ -100,3 +100,16 @@ def test_deployed_mode_always_marks_the_cookie_secure(client, monkeypatch):
     monkeypatch.setattr(webapp, "REQUIRE_LOGIN", True)
     r = webapp.app.test_client().post("/api/login", json={"password": PW})   # plain http, no header
     assert "Secure" in r.headers["Set-Cookie"]
+
+
+def test_session_lasts_30_days(client):
+    r = login(client)
+    assert f"Max-Age={30 * 24 * 3600}" in r.headers["Set-Cookie"]
+
+
+def test_session_key_survives_a_restart_but_not_a_password_change():
+    cookie = auth.SessionSigner(auth.signing_key(PW)).issue()
+    assert auth.SessionSigner(auth.signing_key(PW)).valid(cookie)             # restarted process
+    assert not auth.SessionSigner(auth.signing_key("new password")).valid(cookie)
+    assert auth.signing_key(PW, "explicit secret") == b"explicit secret"
+    assert auth.signing_key("") is None                                        # local, no password
