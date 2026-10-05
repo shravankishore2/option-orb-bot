@@ -302,8 +302,35 @@ def config_frozen():
 
 
 # ------------------------------------------------------------------ live
+SELECTIVE_NOTE = ("The model is selective by design: it takes only high-confidence breakouts. "
+                  "Skipped signals are tracked to measure whether the filter is right.")
+
+
+def tracker_today(day):
+    """Today's rows of the bot's tracker.json by signal id. The bot rewrites it every
+    cycle from the shadow positions it walks forward, GO and SKIP alike, so reading
+    it costs no Dhan request."""
+    snap = read_json(str(shadow.TRACKER_FILE)) or {}
+    if snap.get("day") != day:
+        return {}
+    return {r["id"]: r for r in snap.get("rows", [])}
+
+
+def signal_summary(rows):
+    """The summary strip: counts by decision, and how today's SKIPs are doing (latest
+    candle for open ones, the exit for closed ones). rows: dicts with decision, pnl_pct."""
+    skip = [r for r in rows if r.get("decision") == "SKIP"]
+    priced = [r["pnl_pct"] for r in skip if r.get("pnl_pct") is not None]
+    return {"signals": len(rows), "go": sum(r.get("decision") == "GO" for r in rows),
+            "skip": len(skip), "stale": sum(r.get("decision") == "STALE" for r in rows),
+            "skip_priced": len(priced), "skip_in_profit": sum(v > 0 for v in priced),
+            "skip_avg_pnl": sum(priced) / len(priced) if priced else None}
+
+
 def live_rows(day, cutoff, show):
-    """Today's decisions, joined with current prices from the sent log."""
+    """Today's decisions with their live state from the tracker (current price, P&L,
+    trailing stop, best/worst, status) for GO and SKIP alike; the Telegram sent log's
+    price is only a fallback when the tracker has no row."""
     d = read_csv(DECISIONS_FILE, dtype={"date": str})
     legacy = False
     if not d.empty:
@@ -331,16 +358,28 @@ def live_rows(day, cutoff, show):
     if d.empty:
         return d, legacy
 
+    track = tracker_today(day)
     rows = []
     for _, r in d.iterrows():
         direction = str(r["direction"]).upper()
-        e, c = num(r.get("entry_price")), num(r.get("current_price"))
-        diff = (((c - e) if direction == "BUY" else (e - c)) / e * 100) if e and c else None
+        t = track.get(shadow.signal_id(r.get("date"), r["symbol"], r["direction"])) or {}
+        e = num(r.get("entry_price"))
+        if t.get("price") is not None:
+            c, diff = t["price"], t["pnl_pct"]              # signed in the trade's favour
+        else:
+            c = num(r.get("current_price"))
+            diff = (((c - e) if direction == "BUY" else (e - c)) / e * 100) if e and c else None
+        is_open = t.get("status") == "open"
         sc, th = num(r.get("score")), num(r.get("threshold"))
         rows.append({
             "time": str(r["time"]), "symbol": str(r["symbol"]).upper(), "direction": direction,
             "decision": str(r["decision"]),
-            "entry": price(e), "current": price(c), "diff": pct(diff), "diff_raw": diff,
+            "entry": price(e), "current": price(c), "diff": pct(diff), "diff_raw": diff, "pnl_pct": diff,
+            "trail": price(t.get("trail_stop")) if is_open else "",
+            "best": pct(t.get("best_pct")), "best_raw": num(t.get("best_pct")),
+            "worst": pct(t.get("worst_pct")), "worst_raw": num(t.get("worst_pct")),
+            "status": t.get("status", ""),
+            "status_label": (t.get("status_label", "") + (f" {t['exit_time']}" if t.get("exit_time") else "")),
             "orh": price(r.get("ORH")), "orl": price(r.get("ORL")), "stop": price(r.get("stop")),
             "score": "" if sc is None else f"{sc:.2f}",
             "score_pct": 0 if sc is None else round(min(100, max(0, sc * 100)), 1),
@@ -502,19 +541,17 @@ def index():
 @app.route("/live")
 def live():
     cutoff = request.args.get("time", "15:15")
-    show = request.args.get("show", "go")
+    show = request.args.get("show", "all")
     day = now_ist().date().isoformat()
 
     rows, legacy = live_rows(day, cutoff, show)
     everything, _ = live_rows(day, None, "all")
-    counts = everything["decision"].value_counts().to_dict() if not everything.empty else {}
 
     def side(d):
         return records(rows[rows["direction"] == d]) if not rows.empty else []
 
     return render("live", selected_time=cutoff, show=show, legacy=legacy,
-                  counts={"all": len(everything), "GO": counts.get("GO", 0),
-                          "SKIP": counts.get("SKIP", 0), "STALE": counts.get("STALE", 0)},
+                  summary=signal_summary(records(everything)), selective_note=SELECTIVE_NOTE,
                   buy_signals=side("BUY"), sell_signals=side("SELL"))
 
 
@@ -534,6 +571,7 @@ def tracker_snapshot():
     snap = read_json(str(shadow.TRACKER_FILE)) or {}
     snap.setdefault("rows", [])
     snap["today"] = now_ist().date().isoformat()
+    snap["summary"] = signal_summary(snap["rows"])
     return snap
 
 
@@ -577,10 +615,41 @@ def api_tracker_stream():
 @app.route("/tracker")
 def tracker():
     snap = tracker_snapshot()
-    return render("tracker", snapshot=snap, snapshot_json=json.dumps(snap, default=str))
+    return render("tracker", snapshot=snap, selective_note=SELECTIVE_NOTE)
 
 
 # ------------------------------------------------------------------ scorecard
+def skip_report(df, signals):
+    """The latest live session's SKIPs once their outcomes are labelled: how many made
+    money, their average P&L, the best ones, and how the score related to the outcome
+    across all of that session's labelled signals (GO and SKIP)."""
+    if df.empty or "source" not in df:
+        return None
+    live = df[df["source"] == "live"]
+    if live.empty:
+        return None
+    day = live["date"].max()
+    today = live[live["date"] == day]
+    skips = today[today["decision"] == "SKIP"]
+    total = int(((signals["date"] == day) & (signals["source"] == "live")
+                 & (signals["decision"] == "SKIP")).sum()) if not signals.empty else len(skips)
+    out = {"date": day, "n": len(skips), "open": max(0, total - len(skips)),
+           "wins": int((skips["pnl_%"] > 0).sum()),
+           "avg": float(skips["pnl_%"].mean()) if len(skips) else None,
+           "median": float(skips["pnl_%"].median()) if len(skips) else None,
+           "best": records(skips.nlargest(5, "pnl_%")[["symbol", "time", "direction", "score", "pnl_%", "status"]]),
+           "go_avg": float(today.loc[today["decision"] == "GO", "pnl_%"].mean())
+                     if (today["decision"] == "GO").any() else None,
+           "go_n": int((today["decision"] == "GO").sum()), "rho": None, "bands": []}
+    if len(today) >= 4 and today["score"].nunique() > 1:
+        out["rho"] = float(today["score"].rank().corr(today["pnl_%"].rank()))     # Spearman
+        q = pd.qcut(today["score"], 4, duplicates="drop")
+        for band, g in today.groupby(q, observed=True):
+            out["bands"].append({"lo": float(band.left), "hi": float(band.right), "n": len(g),
+                                 "hit": float((g["pnl_%"] > 0).mean() * 100), "avg": float(g["pnl_%"].mean())})
+    return out
+
+
 def scorecard_view(by):
     df = shadow.labelled_rows()
     signals = shadow._read(shadow.SIGNALS_FILE)
@@ -600,7 +669,8 @@ def scorecard_view(by):
     return {"by": by, "card": card, "open": open_n, "labelled": len(df), "versions": versions,
             "scored_by": scored_by, "min_sample": shadow.MIN_SAMPLE, "costs": C.COST_SENSITIVITY,
             "comparisons": list(reversed(registry.comparisons()))[:12],
-            "drift": read_json(str(shadow.LIVE_DIR / "drift.json"))}
+            "drift": read_json(str(shadow.LIVE_DIR / "drift.json")),
+            "skips": skip_report(df, signals)}
 
 
 @app.route("/scorecard")

@@ -56,14 +56,18 @@
     <!-- ============================================================ LIVE -->
     {% if active_tab == "live" %}
 
+    {% set sm = summary %}
     <section class="stats-row">
-        <div class="stat-card"><span>SIGNALS TODAY</span><strong class="amber">{{ counts.all }}</strong></div>
-        <div class="stat-card"><span>GO (SENT)</span><strong class="green">{{ counts.GO }}</strong></div>
-        <div class="stat-card"><span>SKIPPED BY MODEL</span><strong class="muted">{{ counts.SKIP }}</strong></div>
-        <div class="stat-card"><span>STALE (NOT SENT)</span><strong class="muted">{{ counts.STALE }}</strong></div>
-        <div class="stat-card"><span>GO THRESHOLD</span><strong>{{ model.threshold }}</strong></div>
-        <div class="stat-card"><span>MODEL TRAINED TO</span><strong>{{ model.trained_through }}</strong></div>
+        <div class="stat-card"><span>SIGNALS TODAY</span><strong class="amber">{{ sm.signals }}</strong></div>
+        <div class="stat-card"><span>GO (SENT)</span><strong class="green">{{ sm.go }}</strong></div>
+        <div class="stat-card"><span>SKIP (TRACKED, NOT TAKEN)</span><strong class="muted">{{ sm.skip }}</strong></div>
+        <div class="stat-card"><span>SKIPS IN PROFIT NOW</span><strong>{% if sm.skip_priced %}{{ sm.skip_in_profit }}/{{ sm.skip_priced }}{% else %}—{% endif %}</strong>
+            <small>latest candle, or exit if closed</small></div>
+        <div class="stat-card"><span>SKIP AVG LIVE P&amp;L</span><strong>{% if sm.skip_avg_pnl is not none %}<em class="{{ 'pos' if sm.skip_avg_pnl >= 0 else 'neg' }}">{{ "%+.2f"|format(sm.skip_avg_pnl) }}%</em>{% else %}—{% endif %}</strong>
+            <small>paper, gross</small></div>
+        <div class="stat-card"><span>GO THRESHOLD</span><strong>{{ model.threshold }}</strong>{% if sm.stale %}<small>{{ sm.stale }} stale (not sent)</small>{% endif %}</div>
     </section>
+    <p class="selective-note">{{ selective_note }}</p>
 
     <section class="filter-strip">
         <div class="filter-label">UP TO TIME</div>
@@ -73,8 +77,8 @@
             {% endfor %}
         </div>
         <div class="toggle">
+            <a href="{{ url_for('live', time=selected_time, show='all') }}" class="time-btn {% if show == 'all' %}active{% endif %}">All signals</a>
             <a href="{{ url_for('live', time=selected_time, show='go') }}" class="time-btn {% if show == 'go' %}active{% endif %}">GO only</a>
-            <a href="{{ url_for('live', time=selected_time, show='all') }}" class="time-btn {% if show == 'all' %}active{% endif %}">All decisions</a>
         </div>
     </section>
 
@@ -92,15 +96,15 @@
                     <thead><tr>
                         <th>Time</th><th>Symbol</th><th>Decision</th><th>Score</th>
                         <th>Entry</th><th>Current</th>
-                        <th class="sortable-diff" onclick="cycleSort(this)"><span class="diff-header">P&amp;L <span class="sort-arrow">↕</span></span></th>
-                        <th>Stop</th><th>ORH</th><th>ORL</th>
+                        <th class="sortable-diff" onclick="cycleSort(this)"><span class="diff-header">% from entry <span class="sort-arrow">↕</span></span></th>
+                        <th>Trailing stop</th><th>Best</th><th>Worst</th><th>Status</th><th>ORH</th><th>ORL</th>
                     </tr></thead>
                     <tbody>
                     {% for s in rows %}
                     <tr class="row-{{ s.decision|lower }}">
                         <td>{{ s.time }}</td>
                         <td class="symbol {{ side }}-symbol">{{ s.symbol }}</td>
-                        <td><span class="decision {{ s.decision|lower }}">{{ s.decision }}</span></td>
+                        <td><span class="decision {{ s.decision|lower }}">{{ s.decision }}</span>{% if s.decision == "SKIP" %}<small class="paper-tag" title="paper/shadow position: the model did not take it">tracked, not taken</small>{% endif %}</td>
                         <td>
                             {% if s.score %}
                             <div class="scorebar" title="score {{ s.score }} vs threshold">
@@ -112,7 +116,10 @@
                         <td>{% if s.current %}₹{{ s.current }}{% endif %}</td>
                         <td data-v="{{ s.diff_raw if s.diff_raw is not none else '' }}"
                             class="{% if s.diff_raw is not none and s.diff_raw != '' %}{% if s.diff_raw >= 0 %}pos{% else %}neg{% endif %}{% endif %}">{{ s.diff }}</td>
-                        <td>{% if s.stop %}₹{{ s.stop }}{% endif %}</td>
+                        <td>{% if s.trail %}₹{{ s.trail }}{% elif s.status and s.status != "open" %}—{% endif %}</td>
+                        <td class="{% if s.best_raw is not none and s.best_raw != '' %}{% if s.best_raw >= 0 %}pos{% else %}neg{% endif %}{% endif %}">{{ s.best }}</td>
+                        <td class="{% if s.worst_raw is not none and s.worst_raw != '' %}{% if s.worst_raw >= 0 %}pos{% else %}neg{% endif %}{% endif %}">{{ s.worst }}</td>
+                        <td>{% if s.status %}<span class="trk-status s-{{ s.status }}">{{ s.status_label }}</span>{% endif %}</td>
                         <td>₹{{ s.orh }}</td>
                         <td>₹{{ s.orl }}</td>
                     </tr>
@@ -128,7 +135,10 @@
     </main>
     <p class="footnote">Decisions are made on completed 5-minute candles. A signal first seen more than
         10 minutes late (e.g. after a restart) is logged as STALE and not sent. The bar shows the model's
-        score; the white tick is the GO threshold.</p>
+        score; the white tick is the GO threshold. Current, % from entry, trailing stop, Best/Worst and
+        Status come from the bot's paper tracker, updated after every 5-minute cycle (this page reloads
+        every 30 s); "% from entry", Best and Worst are signed in the trade's favour. SKIP rows are
+        paper positions the model did not take.</p>
     {% endif %}
 
 
@@ -138,19 +148,21 @@
         <div class="section-header">
             <div>
                 <h2>Live Signal Tracker</h2>
-                <p>Every signal today, GO and NO-GO, paper-tracked with the backtest's exit rule on the
+                <p>Every signal today, GO and SKIP, paper-tracked with the backtest's exit rule on the
                    5-minute candles the bot already fetches. <strong>Paper only — no orders.</strong></p>
             </div>
             <div class="conn-pill" id="trk-conn"><span class="dot"></span><span>connecting…</span></div>
         </div>
 
         <section class="stats-row" id="trk-stats"></section>
+        <p class="selective-note">{{ selective_note }}</p>
 
         <div class="filter-strip">
             <div class="filter-label" id="trk-asof">—</div>
-            <div class="toggle" role="tablist" aria-label="GO or NO-GO signals">
-                <button type="button" class="time-btn active" role="tab" aria-selected="true" data-tab="go">GO <span id="trk-n-go"></span></button>
-                <button type="button" class="time-btn" role="tab" aria-selected="false" data-tab="nogo">NO-GO <span id="trk-n-nogo"></span></button>
+            <div class="toggle" role="tablist" aria-label="Which signals">
+                <button type="button" class="time-btn active" role="tab" aria-selected="true" data-tab="all">All <span id="trk-n-all"></span></button>
+                <button type="button" class="time-btn" role="tab" aria-selected="false" data-tab="go">GO <span id="trk-n-go"></span></button>
+                <button type="button" class="time-btn" role="tab" aria-selected="false" data-tab="nogo">SKIP <span id="trk-n-nogo"></span></button>
             </div>
         </div>
 
@@ -244,6 +256,47 @@
                 </tbody>
             </table>
         </div>
+        {% endif %}
+
+        {% set sk = sc.skips %}
+        {% if sk %}
+        <h3 class="sub">Skipped signals · {{ sk.date }} (tracked, not taken)</h3>
+        <section class="stats-row">
+            <div class="stat-card"><span>SKIPS COMPLETED</span><strong>{{ sk.n }}</strong><small>{% if sk.open %}{{ sk.open }} still open{% else %}all closed{% endif %}</small></div>
+            <div class="stat-card"><span>ENDED IN PROFIT</span><strong class="amber">{{ sk.wins }}/{{ sk.n }}</strong><small>{% if sk.n %}{{ "%.0f"|format(sk.wins / sk.n * 100) }}%{% endif %}</small></div>
+            <div class="stat-card"><span>SKIP AVG P&amp;L</span><strong>{{ avg(sk.avg) }}</strong><small>median {% if sk.median is not none %}{{ "%+.2f"|format(sk.median) }}%{% else %}—{% endif %} · gross</small></div>
+            <div class="stat-card"><span>GO AVG P&amp;L</span><strong>{{ avg(sk.go_avg) }}</strong><small>n = {{ sk.go_n }}</small></div>
+            <div class="stat-card"><span>SCORE VS OUTCOME</span><strong>{% if sk.rho is not none %}ρ {{ "%+.2f"|format(sk.rho) }}{% else %}—{% endif %}</strong><small>Spearman, all signals that day</small></div>
+        </section>
+        <div class="tables-grid">
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Best SKIPs</th><th>Time</th><th>Dir</th><th class="num">Score</th><th class="num">P&amp;L</th><th>Exit</th></tr></thead>
+                    <tbody>
+                    {% for b in sk.best %}
+                    <tr><td class="symbol">{{ b.symbol }}</td><td>{{ b.time[:5] }}</td><td>{{ b.direction }}</td>
+                        <td class="num">{{ "%.3f"|format(b.score) }}</td><td class="num">{{ avg(b["pnl_%"]) }}</td><td>{{ b.status }}</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if sk.bands %}
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Score band (quartiles)</th><th class="num">n</th><th class="num">Hit</th><th class="num">Avg P&amp;L</th></tr></thead>
+                    <tbody>
+                    {% for b in sk.bands %}
+                    <tr><td>{{ "%.3f"|format(b.lo) }} – {{ "%.3f"|format(b.hi) }}</td><td class="num">{{ b.n }}</td>
+                        <td class="num">{{ "%.0f"|format(b.hit) }}%</td><td class="num">{{ avg(b.avg) }}</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+        <p class="footnote">One session is far too few to judge the filter (under {{ sc.min_sample }} signals a rate is noise);
+            this is a daily read-out, and the cumulative numbers above are what count. Completed SKIPs are stored
+            as labelled data (<code>shadow_outcomes.csv</code>) for the monthly challenger.</p>
         {% endif %}
 
         <h3 class="sub">Training / serving skew (weekly)</h3>
@@ -511,7 +564,7 @@
 
 
     <footer class="footer">
-        <div><strong>ORBITAL</strong><span>Opening Range Breakout · B.Tech final-year project</span></div>
+        <div><strong>ORBITAL</strong><span>Opening Range Breakout · B.Tech project</span></div>
         <div>Model: {{ model.features }} inputs · trained to {{ model.trained_through }} · Local CSV powered</div>
     </footer>
 </div>

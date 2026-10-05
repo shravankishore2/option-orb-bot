@@ -5,8 +5,8 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   let snap = JSON.parse($("trk-data").textContent || "{}");
-  let tab = "go";
-  try { tab = sessionStorage.getItem("orbital-trk-tab") || "go"; } catch (e) {}
+  let tab = "all";
+  try { tab = sessionStorage.getItem("orbital-trk-tab") || "all"; } catch (e) {}
 
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -17,14 +17,15 @@
 
   function row(r) {
     const closed = r.status !== "open";
-    return `<tr class="${closed ? "row-closed" : ""}">
+    const skip = r.decision === "SKIP";
+    return `<tr class="${closed ? "row-closed" : ""}${skip ? " row-paper" : ""}">
       <td class="symbol ${r.direction === "BUY" ? "buy" : "sell"}-symbol">${esc(r.symbol)}</td>
       <td>${esc(r.time)}</td>
       <td>${r.direction === "BUY" ? "▲ BUY" : "▼ SELL"}</td>
       <td><div class="scorebar" title="score ${r.score.toFixed(3)} vs threshold ${r.threshold.toFixed(3)}">
             <i style="width:${Math.min(100, r.score * 100).toFixed(0)}%"></i><b style="left:${(r.threshold * 100).toFixed(0)}%"></b>
           </div><small>${r.score.toFixed(3)}</small></td>
-      <td><span class="decision ${r.go ? "go" : "skip"}">${r.go ? "GO" : "NO-GO"}</span>${r.decision === "STALE" ? ' <span class="few" title="first seen late; not sent">stale</span>' : ""}</td>
+      <td><span class="decision ${r.go ? "go" : "skip"}">${r.go ? "GO" : "SKIP"}</span>${r.decision === "STALE" ? ' <span class="few" title="first seen late; not sent">stale</span>' : ""}${!r.go ? '<small class="paper-tag" title="paper/shadow position: the model did not take it">tracked, not taken</small>' : ""}</td>
       <td class="num">${money(r.entry)}</td>
       <td class="num">${money(r.price)}</td>
       ${pct(r.pnl_pct)}
@@ -42,29 +43,32 @@
     return `<div class="stat-card"><span>${label}</span><strong class="${cls || ""}">${value}</strong></div>`;
   }
 
+  const signed = (v) => (v == null ? "—" : `<em class="${v >= 0 ? "pos" : "neg"}">${v >= 0 ? "+" : ""}${v.toFixed(2)}%</em>`);
+
   function render() {
     const rows = snap.rows || [];
     const go = rows.filter((r) => r.go), nogo = rows.filter((r) => !r.go);
-    const shown = tab === "go" ? go : nogo;
+    const shown = tab === "go" ? go : tab === "nogo" ? nogo : rows;
     const open = rows.filter((r) => r.status === "open").length;
-    const done = rows.filter((r) => r.status !== "open" && r.pnl_pct != null);
-    const wins = done.filter((r) => r.pnl_pct > 0).length;
+    const sm = snap.summary || {};
 
+    $("trk-n-all").textContent = `(${rows.length})`;
     $("trk-n-go").textContent = `(${go.length})`;
     $("trk-n-nogo").textContent = `(${nogo.length})`;
     $("trk-body").innerHTML = shown.map(row).join("");
     const empty = $("trk-empty");
     empty.hidden = shown.length > 0;
-    empty.textContent = rows.length ? `No ${tab === "go" ? "GO" : "NO-GO"} signals ${snap.day === snap.today ? "today" : "that session"}.`
+    empty.textContent = rows.length ? `No ${tab === "go" ? "GO" : "SKIP"} signals ${snap.day === snap.today ? "today" : "that session"}.`
                                     : "No signals yet today. They appear here from the 09:40 cycle.";
     const asOf = snap.as_of ? new Date(snap.as_of) : null;
     $("trk-asof").textContent = !asOf ? "NO DATA YET"
       : (snap.day === snap.today ? "AS OF " : `LAST SESSION ${snap.day} · AS OF `) +
         asOf.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
     $("trk-stats").innerHTML =
-      stat("SIGNALS", rows.length, "amber") + stat("GO", go.length, "green") + stat("NO-GO", nogo.length, "muted") +
-      stat("OPEN", open) + stat("CLOSED", done.length) +
-      stat("CLOSED IN PROFIT", done.length ? `${wins}/${done.length}` : "—");
+      stat("SIGNALS", rows.length, "amber") + stat("GO", sm.go ?? go.length, "green") +
+      stat("SKIP (TRACKED, NOT TAKEN)", sm.skip ?? nogo.length, "muted") +
+      stat("SKIPS IN PROFIT NOW", sm.skip_priced ? `${sm.skip_in_profit}/${sm.skip_priced}` : "—") +
+      stat("SKIP AVG LIVE P&amp;L", signed(sm.skip_avg_pnl)) + stat("OPEN", open);
     document.querySelectorAll('[role="tab"]').forEach((b) => {
       const on = b.dataset.tab === tab;
       b.classList.toggle("active", on);

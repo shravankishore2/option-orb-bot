@@ -784,7 +784,11 @@ tbody tr:hover {
 .decision.go { background: var(--green-soft); color: var(--green); }
 .decision.skip { background: rgba(127, 140, 163, 0.14); color: var(--muted-2); }
 .decision.stale { background: rgba(246, 185, 59, 0.12); color: var(--amber); }
-tr.row-skip td, tr.row-stale td { opacity: 0.55; }
+tr.row-stale td { opacity: 0.55; }
+tr.row-skip td, tr.row-paper td { opacity: 0.85; }
+.paper-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 10px;
+             font-weight: 600; white-space: nowrap; border: 1px dashed var(--muted); color: var(--muted-2); }
+.selective-note { margin: 2px 2px 14px; color: var(--muted-2); font-size: 13px; }
 
 /* score bar with threshold tick */
 .scorebar {
