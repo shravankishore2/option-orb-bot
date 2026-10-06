@@ -126,7 +126,7 @@ def test_no_raw_price_anywhere_in_the_guest_view(client):
                 assert t not in body, f"raw price {t} in {path}"
         if r.is_json:
             assert not PRICE_KEYS & set(_keys(r.get_json())), f"price field in {path}"
-        else:
+        elif "fragment=1" not in path:                     # the refresh fragment is only strip + table
             assert webapp.GUEST_BANNER in body and "Log out" not in body, path
 
 

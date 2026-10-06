@@ -72,6 +72,8 @@ def safe_next(target):
 def require_login():
     if request.endpoint in GUEST_ENDPOINTS:
         return guest_gate()
+    if request.path.startswith("/guest") and request.routing_exception is not None:
+        return None                               # e.g. POST to a guest page: a plain 405/404
     if request.endpoint in OPEN_ENDPOINTS or logged_in():
         return None
     if request.path.startswith("/api/"):          # the live stream asks, like QuantRadar's client
