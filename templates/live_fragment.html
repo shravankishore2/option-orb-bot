@@ -10,20 +10,30 @@
     {%- if raw is not none and raw != "" -%}<span class="{{ 'pos' if raw >= 0 else 'neg' }}">{{ text }}</span>{%- else -%}—{%- endif -%}
 {%- endmacro -%}
 {%- if part == "tickers" or not part %}
-<div id="live-tickers" class="ticker-bar" data-count="{{ tickers|length }}">
-    <button type="button" class="ticker-toggle" aria-expanded="false" aria-controls="ticker-chips">
-        Tickers ({{ tickers|length }})<span class="ticker-selected"></span>
-    </button>
-    <div class="ticker-chips" id="ticker-chips" role="group" aria-label="Tickers that signalled today, in time order">
-        <span class="filter-label" aria-hidden="true">TICKERS</span>
-        <button type="button" class="chip tchip" data-filter="ticker" data-value="all" aria-pressed="true">All</button>
-        {% for t in tickers %}
-        <button type="button" class="chip tchip{% if t.go %} tchip-go{% endif %}" data-filter="ticker" data-value="{{ t.symbol }}"
-                aria-pressed="false" title="first signal {{ t.time }}{% if t.go %} · GO{% endif %}"
-                aria-label="{{ t.symbol }}, {{ ' and '.join(t.dirs)|lower }}{% if t.go %}, GO{% endif %}"
-                >{% for d in t.dirs %}<span class="tdir tdir-{{ d|lower }}" aria-hidden="true">{{ "▲" if d == "BUY" else "▼" }}</span>{% endfor %}{{ t.symbol }}</button>
-        {% endfor %}
-    </div>
+<div id="live-tickers" class="ticker-dd-wrap" data-count="{{ tickers|length }}">
+    <details class="ticker-dd" id="ticker-dd">
+        <summary>Tickers <span class="dd-count">({{ tickers|length }})</span><span class="ticker-selected"></span></summary>
+        <div class="dd-panel">
+            <div class="dd-head">
+                <input type="search" class="dd-search" id="dd-search" placeholder="Find a ticker" autocomplete="off"
+                       aria-label="Find a ticker in the list">
+                <button type="button" class="chip dd-all" data-filter="ticker" data-value="all" aria-pressed="true">All</button>
+            </div>
+            <ul class="dd-list" role="group" aria-label="Tickers that signalled today (alphabetical)">
+                {% for t in tickers %}
+                <li class="dd-item{% if t.go %} dd-go{% endif %}" data-symbol="{{ t.symbol }}" data-company="{{ t.company|lower }}">
+                    <label>
+                        <input type="checkbox" data-filter="ticker" value="{{ t.symbol }}">
+                        <span class="dd-sym">{% for d in t.dirs %}<span class="tdir tdir-{{ d|lower }}" aria-hidden="true">{{ "▲" if d == "BUY" else "▼" }}</span>{% endfor %}{{ t.symbol }}</span>
+                        {% if t.go %}<span class="dd-gobadge">GO</span>{% endif %}
+                        <small class="dd-meta">{{ t.time }}{% if t.company %} · {{ t.company }}{% endif %}</small>
+                    </label>
+                </li>
+                {% endfor %}
+            </ul>
+            <p class="dd-none" hidden>No ticker matches.</p>
+        </div>
+    </details>
 </div>
 {%- endif %}
 {%- if part == "strip" or not part %}
@@ -73,6 +83,7 @@
         {% set did = "d-" ~ loop.index %}
         <tbody class="sig {{ 'is-go' if s.decision == 'GO' else ('is-stale' if s.decision == 'STALE' else 'is-skip') }}"
                data-id="{{ s.id }}" data-decision="{{ s.decision }}" data-dir="{{ s.direction }}"
+               data-company="{{ (s.company or '')|lower }}"
                data-state="{{ 'closed' if closed else 'open' }}" data-time="{{ s.time }}" data-symbol="{{ s.symbol }}"
                data-score="{{ s.score_raw if s.score_raw is not none else '' }}"
                data-pnl="{{ s.diff_raw if s.diff_raw is not none else '' }}"
@@ -155,7 +166,6 @@
                     <div><dt>Best / worst so far</dt><dd>{{ signed(s.best_raw, s.best) }} / {{ signed(s.worst_raw, s.worst) }}</dd></div>
                     <div><dt>Score vs GO threshold</dt><dd>{% if s.score_raw is not none %}{{ "%.3f"|format(s.score_raw) }} vs {{ "%.3f"|format(s.threshold) if s.threshold is not none else "—" }}{% else %}—{% endif %}</dd></div>
                     <div><dt>Status</dt><dd>{{ s.status_label or "—" }}{% if s.exit_time %} at {{ s.exit_time }}{% endif %}</dd></div>
-                    <div><dt>Decided at</dt><dd>{{ s.decided_at or "—" }}{% if s.age_min is not none %} ({{ "%.1f"|format(s.age_min) }} min after the candle){% endif %}</dd></div>
                 </dl>
             </td>
         </tr>

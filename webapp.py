@@ -388,6 +388,7 @@ def live_rows(day, cutoff, show, rule=exits.CURRENT_RULE):
         return d, legacy
 
     track = tracker_today(day)
+    names = company_names()
     rows = []
     for _, r in d.iterrows():
         direction = str(r["direction"]).upper()
@@ -406,6 +407,7 @@ def live_rows(day, cutoff, show, rule=exits.CURRENT_RULE):
         initial = num(t.get("initial_stop")) if t.get("initial_stop") is not None else num(r.get("stop"))
         rows.append({
             "id": shadow.signal_id(r.get("date"), r["symbol"], r["direction"]),
+            "company": names.get(str(r["symbol"]).upper(), ""),
             "entry_raw": e, "initial_raw": initial, "orh_raw": num(r.get("ORH")), "orl_raw": num(r.get("ORL")),
             "prev_close_raw": num(r.get("prev_close")),
             "time": str(r["time"]), "symbol": str(r["symbol"]).upper(), "direction": direction,
@@ -433,14 +435,37 @@ def live_rows(day, cutoff, show, rule=exits.CURRENT_RULE):
 
 
 def ticker_chips(signals):
-    """One chip per ticker that signalled, in time order of its first signal; GO marked."""
+    """One entry per ticker that signalled, alphabetical; first signal time, directions, GO."""
     out = {}
     for s in sorted(signals, key=lambda s: (s["time"], s["symbol"])):
-        t = out.setdefault(s["symbol"], {"symbol": s["symbol"], "time": s["time"][:5], "dirs": [], "go": False})
+        t = out.setdefault(s["symbol"], {"symbol": s["symbol"], "time": s["time"][:5], "dirs": [], "go": False,
+                                         "company": s.get("company", "")})
         if s["direction"] not in t["dirs"]:
             t["dirs"].append(s["direction"])
         t["go"] = t["go"] or s["decision"] == "GO"
-    return list(out.values())
+    return sorted(out.values(), key=lambda t: t["symbol"])
+
+
+_names = {"stamp": None, "map": {}}
+
+
+def company_names():
+    """Symbol -> company name from NSE's list files (current, then the previous list kept
+    under data/reference/, for names that left the index but signalled before it updated)."""
+    files = [os.path.join(BASE_DIR, "data", "ind_nifty200list.csv")]
+    ref = os.path.join(BASE_DIR, "data", "reference")
+    if os.path.isdir(ref):
+        files += sorted((os.path.join(dp, f) for dp, _, fs in os.walk(ref) for f in fs if f == "ind_nifty200list.csv"),
+                        reverse=True)
+    stamp = tuple((f, os.path.getmtime(f)) for f in files if os.path.exists(f))
+    if stamp != _names["stamp"]:
+        m = {}
+        for f, _ in reversed(stamp):                       # current list read last, so it wins
+            df = read_csv(f)
+            if {"Symbol", "Company Name"} <= set(df.columns):
+                m.update(zip(df["Symbol"].astype(str).str.strip().str.upper(), df["Company Name"].astype(str)))
+        _names.update(stamp=stamp, map=m)
+    return _names["map"]
 
 
 def range_scale(rows):
@@ -898,7 +923,7 @@ def guest_signal(s):
     sign = 1.0 if s["direction"] == "BUY" else -1.0
     e, orh, orl = s.get("entry_raw"), s.get("orh_raw"), s.get("orl_raw")
     level = orh if sign > 0 else orl
-    keep = ("id", "time", "symbol", "direction", "decision", "score", "score_raw", "threshold", "score_pct",
+    keep = ("id", "time", "symbol", "company", "direction", "decision", "score", "score_raw", "threshold", "score_pct",
             "thr_pct", "diff", "diff_raw", "best", "best_raw", "worst", "worst_raw", "status", "status_short",
             "status_label", "exit_time", "decided_at", "age_min", "stop_moved")
     out = {k: s.get(k) for k in keep}

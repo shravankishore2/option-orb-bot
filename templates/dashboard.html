@@ -76,6 +76,8 @@
     {% with part = "tickers" %}{% include "live_fragment.html" %}{% endwith %}
 
     <section class="chip-bar" aria-label="Show signals">
+        <input type="search" class="table-search" id="sig-search" placeholder="Search ticker or company"
+               autocomplete="off" aria-label="Search the table by ticker or company" aria-controls="sig-table">
         <div class="chip-group" role="group" aria-label="Decision">
             <button type="button" class="chip" data-filter="decision" data-value="all" aria-pressed="true">All</button>
             <button type="button" class="chip" data-filter="decision" data-value="GO" aria-pressed="false">GO</button>

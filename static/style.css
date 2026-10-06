@@ -1037,29 +1037,48 @@ th[aria-sort="descending"] .sort i::after { content: "↓"; opacity: 1; }
 /* guest (read-only demo) */
 .banner.guest-banner { border-color: var(--blue); background: rgba(92, 200, 255, 0.10); color: var(--text); }
 
-/* ticker chips: every ticker that signalled today, in time order; GO highlighted */
-.ticker-bar { margin: 4px 0 10px; }
-.ticker-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.ticker-chips .filter-label { margin-right: 6px; }
-.tchip { min-height: 28px; padding: 3px 10px; font-size: 12px; border-radius: 14px; }
-.tchip-go { border-color: var(--green); color: var(--text); background: rgba(32, 228, 134, 0.08); font-weight: 700; }
-.tchip-go[aria-pressed="true"] { background: rgba(32, 228, 134, 0.22); border-color: var(--green); }
+/* Tickers dropdown: alphabetical, searchable, multi-select; closed by default */
+.ticker-dd-wrap { margin: 2px 0 10px; }
+.ticker-dd { position: relative; display: inline-block; }
+.ticker-dd > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+                       min-height: 36px; padding: 6px 14px; border-radius: 18px; font-size: 13px;
+                       background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+.ticker-dd > summary::-webkit-details-marker { display: none; }
+.ticker-dd > summary::after { content: "▾"; color: var(--muted-2); }
+.ticker-dd[open] > summary::after { content: "▴"; }
+.ticker-dd > summary:focus-visible, .dd-search:focus-visible, .table-search:focus-visible,
+.dd-item input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.dd-count { color: var(--muted-2); }
+.ticker-selected { color: var(--blue); }
+.dd-panel { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: 340px; padding: 10px;
+            background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+.dd-head { display: flex; gap: 8px; margin-bottom: 8px; }
+.dd-search, .table-search { font: inherit; font-size: 13px; color: var(--text); background: var(--bg);
+                            border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; min-height: 34px; }
+.dd-search { flex: 1; min-width: 0; }
+.table-search { width: 240px; }
+.table-search::placeholder, .dd-search::placeholder { color: var(--muted-2); }
+.dd-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.dd-item[hidden] { display: none; }
+.dd-item label { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; column-gap: 8px;
+                 padding: 6px 6px; border-radius: 6px; cursor: pointer; }
+.dd-item label:hover { background: rgba(255, 255, 255, 0.04); }
+.dd-item input { margin: 0; accent-color: var(--blue); width: 16px; height: 16px; }
+.dd-sym { font-weight: 600; font-size: 13px; }
+.dd-go .dd-sym { color: var(--green); }
+.dd-gobadge { font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 4px; background: var(--green); color: #06251a; }
+.dd-meta { grid-column: 2 / -1; color: var(--muted-2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dd-none { margin: 6px; color: var(--muted-2); font-size: 12px; }
 .tdir { font-size: 9px; margin-right: 3px; }
 .tdir-buy { color: var(--green); }
 .tdir-sell { color: #ff6874; }
-.ticker-toggle { display: none; }
+@media (max-width: 767px) {
+    .dd-panel { width: calc(100vw - 28px); max-width: 100%; }
+    .ticker-dd { display: block; }
+    .table-search { width: 100%; }
+    .dd-item label { min-height: 40px; }
+}
 .chip.on { background: rgba(92, 200, 255, 0.14); border-color: var(--blue); color: var(--text); }
 .chip.what-if small { font-size: 10px; color: var(--amber); margin-left: 4px; }
 .rule-toggle .chip { text-decoration: none; }
 .banner.what-if-banner { border-color: var(--amber); background: rgba(246, 185, 59, 0.08); color: var(--text); }
-@media (max-width: 767px) {
-    .ticker-toggle { display: inline-flex; align-items: center; min-height: 40px; padding: 6px 14px; border-radius: 20px;
-                     font: inherit; font-size: 13px; cursor: pointer; background: var(--panel); color: var(--text);
-                     border: 1px solid var(--border); }
-    .ticker-toggle::after { content: "▾"; margin-left: 8px; color: var(--muted-2); }
-    .ticker-bar.open .ticker-toggle::after { content: "▴"; }
-    .ticker-bar:not(.open) .ticker-chips { display: none; }
-    .ticker-chips { margin-top: 8px; }
-    .ticker-chips .filter-label { display: none; }
-    .tchip { min-height: 36px; }
-}

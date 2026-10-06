@@ -7,7 +7,8 @@
   const KEY = "orbital-live-view";
   const STATUS_ORDER = { open: 0, target: 1, trailed: 2, stopped: 3, eod: 4, "": 5 };
 
-  let view = { decision: "all", dir: "all", state: "all", sort: null, desc: false, open: [], tickers: [], tickersOpen: false };
+  let view = { decision: "all", dir: "all", state: "all", sort: null, desc: false, open: [], tickers: [],
+               tickersOpen: false, q: "", tq: "" };
   try { Object.assign(view, JSON.parse(sessionStorage.getItem(KEY) || "{}")); } catch (e) {}
   const save = () => { try { sessionStorage.setItem(KEY, JSON.stringify(view)); } catch (e) {} };
 
@@ -50,7 +51,8 @@
       const ok = (view.decision === "all" || tb.dataset.decision === view.decision) &&
                  (view.dir === "all" || tb.dataset.dir === view.dir) &&
                  (view.state === "all" || tb.dataset.state === view.state) &&
-                 (!view.tickers.length || view.tickers.includes(tb.dataset.symbol));
+                 (!view.tickers.length || view.tickers.includes(tb.dataset.symbol)) &&
+                 (!view.q || tb.dataset.symbol.toLowerCase().includes(view.q) || (tb.dataset.company || "").includes(view.q));
       tb.hidden = !ok;
       if (ok) shown += 1;
     });
@@ -68,18 +70,30 @@
         : view[c.dataset.filter] === c.dataset.value;
       c.setAttribute("aria-pressed", String(on));
     });
-    const bar = document.getElementById("live-tickers");
-    if (bar) {                                          // phones: a collapsible row
-      bar.classList.toggle("open", view.tickersOpen);
-      const t = bar.querySelector(".ticker-toggle");
-      t.setAttribute("aria-expanded", String(view.tickersOpen));
-      t.querySelector(".ticker-selected").textContent = view.tickers.length ? ` · ${view.tickers.length} selected` : "";
-    }
+    syncTickers();
     const total = groups().length;
     const count = document.getElementById("sig-count");
     if (count) count.textContent = total ? `Showing ${shown} of ${total} signals` : "";
     const empty = document.getElementById("sig-filtered-empty");
     if (empty) empty.hidden = !(total && shown === 0);
+  }
+
+  function syncTickers() {                             // the Tickers dropdown mirrors view.tickers
+    const dd = document.getElementById("ticker-dd");
+    if (!dd) return;
+    if (dd.open !== view.tickersOpen) dd.open = view.tickersOpen;
+    dd.querySelector(".ticker-selected").textContent = view.tickers.length ? ` · ${view.tickers.length} selected` : "";
+    dd.querySelectorAll('input[data-filter="ticker"]').forEach((c) => { c.checked = view.tickers.includes(c.value); });
+    const search = dd.querySelector(".dd-search");
+    if (search && search.value !== view.tq) search.value = view.tq;
+    let any = false;
+    dd.querySelectorAll(".dd-item").forEach((li) => {
+      const ok = !view.tq || li.dataset.symbol.toLowerCase().includes(view.tq) || (li.dataset.company || "").includes(view.tq);
+      li.hidden = !ok; any = any || ok;
+    });
+    dd.querySelector(".dd-none").hidden = any;
+    const q = document.getElementById("sig-search");
+    if (q && q.value !== view.q) q.value = view.q;
   }
 
   function applyOpen() {
@@ -108,10 +122,9 @@
       save(); applyFilters();
       return;
     }
-    if (e.target.closest(".ticker-toggle")) {
-      view.tickersOpen = !view.tickersOpen;
-      save(); applyFilters();
-      return;
+    const dd = document.getElementById("ticker-dd");
+    if (dd && dd.open && !e.target.closest("#ticker-dd")) {   // click outside closes the dropdown
+      view.tickersOpen = false; save(); syncTickers();
     }
     const sort = e.target.closest("button.sort");
     if (sort) {
@@ -128,6 +141,24 @@
       view.open = view.open.includes(id) ? view.open.filter((x) => x !== id) : view.open.concat(id);
       save(); applyOpen();
     }
+  });
+
+  document.addEventListener("change", (e) => {
+    const box = e.target.closest('input[data-filter="ticker"]');
+    if (!box) return;
+    view.tickers = box.checked ? view.tickers.concat(box.value) : view.tickers.filter((x) => x !== box.value);
+    save(); applyFilters();
+  });
+  document.addEventListener("input", (e) => {
+    if (e.target.id === "sig-search") { view.q = e.target.value.trim().toLowerCase(); save(); applyFilters(); }
+    if (e.target.id === "dd-search") { view.tq = e.target.value.trim().toLowerCase(); save(); syncTickers(); }
+  });
+  document.addEventListener("toggle", (e) => {          // <details> toggle doesn't bubble: capture it
+    if (e.target.id === "ticker-dd") { view.tickersOpen = e.target.open; save(); }
+  }, true);
+  document.addEventListener("keydown", (e) => {
+    const dd = document.getElementById("ticker-dd");
+    if (e.key === "Escape" && dd && dd.open) { view.tickersOpen = false; save(); syncTickers(); dd.querySelector("summary").focus(); }
   });
 
   async function refresh() {

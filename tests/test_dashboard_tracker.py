@@ -248,19 +248,34 @@ def test_the_live_view_shows_the_current_rule_by_default_with_a_what_if_toggle(o
     assert "What-if view" not in open_client.get("/live?rule=nonsense").get_data(as_text=True)
 
 
-def test_ticker_chips_in_time_order_with_go_and_direction(open_client, files, monkeypatch):
-    import exits  # noqa: F401
+def test_tickers_dropdown_alphabetical_closed_searchable_with_go(open_client, files, monkeypatch):
     _live_files(files, monkeypatch)
     html = open_client.get("/live").get_data(as_text=True)
-    chips = re.findall(r'data-filter="ticker" data-value="([^"]+)"', html)
-    assert chips == ["all", "KALYANKJIL", "DMART", "MARICO"]                        # first-signal time order
-    dm = html.split('data-value="DMART"')[0].rsplit("<button", 1)[1]
-    assert "tchip-go" in dm
-    assert 'tdir tdir-sell' in html.split('data-value="DMART"')[1].split("</button>")[0]
+    assert '<details class="ticker-dd" id="ticker-dd">' in html                     # closed by default
+    boxes = re.findall(r'<input type="checkbox" data-filter="ticker" value="([^"]+)">', html)
+    assert boxes == ["DMART", "KALYANKJIL", "MARICO"]                               # alphabetical
+    dm = html.split('data-symbol="DMART"')[1].split("</li>")[0]
+    assert "dd-gobadge" in dm and "tdir tdir-sell" in dm
+    assert 'id="dd-search"' in html and 'data-value="all"' in html and 'id="sig-search"' in html
+    assert "Decided at" not in html
     assert 'id="live-tickers"' in open_client.get("/live?fragment=1").get_data(as_text=True)
-    assert webapp.ticker_chips([{"symbol": "A", "time": "10:00:00", "direction": "BUY", "decision": "SKIP"},
-                                {"symbol": "A", "time": "11:00:00", "direction": "SELL", "decision": "GO"}]) == \
-        [{"symbol": "A", "time": "10:00", "dirs": ["BUY", "SELL"], "go": True}]
+    assert webapp.ticker_chips([{"symbol": "B", "time": "10:00:00", "direction": "BUY", "decision": "SKIP"},
+                                {"symbol": "A", "time": "11:00:00", "direction": "SELL", "decision": "GO"},
+                                {"symbol": "B", "time": "12:00:00", "direction": "SELL", "decision": "SKIP"}]) == \
+        [{"symbol": "A", "time": "11:00", "dirs": ["SELL"], "go": True, "company": ""},
+         {"symbol": "B", "time": "10:00", "dirs": ["BUY", "SELL"], "go": False, "company": ""}]
+
+
+def test_rows_carry_the_company_name_for_search(open_client, files, monkeypatch):
+    _live_files(files, monkeypatch)
+    lst = files / "data"
+    lst.mkdir()
+    (lst / "ind_nifty200list.csv").write_text("Company Name,Industry,Symbol,Series,ISIN Code\n"
+                                              "Avenue Supermarts Ltd.,Consumer Services,DMART,EQ,X\n")
+    monkeypatch.setattr(webapp, "BASE_DIR", str(files))
+    monkeypatch.setattr(webapp, "_names", {"stamp": None, "map": {}})
+    html = open_client.get("/live").get_data(as_text=True)
+    assert 'data-company="avenue supermarts ltd."' in html
 
 
 def test_scorecard_compares_the_exit_rules_on_live_signals(open_client, files):

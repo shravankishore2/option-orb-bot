@@ -208,6 +208,7 @@ def test_noindex_everywhere_the_guest_goes(client):
 
 def test_guest_view_has_the_ticker_chips_and_the_exit_rule_toggle(client):
     html = client.get(f"/guest?k={KEY}").get_data(as_text=True)
-    assert 'data-filter="ticker" data-value="KALYANKJIL"' in html and "10-min trail grace" in html
+    assert 'data-filter="ticker" value="KALYANKJIL"' in html and "10-min trail grace" in html
+    assert 'id="sig-search"' in html and "Decided at" not in html
     links = re.findall(r'href="(/guest\?[^"]*rule=exit_v2_grace10[^"]*)"', html)
     assert links and all(f"k={KEY}" in u for u in links)                          # the toggle keeps the key
