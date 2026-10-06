@@ -238,13 +238,14 @@ class LiveEngine:
     """
 
     def __init__(self, source, model, feature_list, threshold, symbols, sectors,
-                 version=C.MODEL_VERSION, baseline=None):
+                 version=C.MODEL_VERSION, baseline=None, variants=None):
         self.source = source
         self.model = model
         self.features = feature_list
         self.threshold = threshold
         self.version = version
         self.baseline = baseline
+        self.variants = list(variants or [])    # shadow only: logged, never decide (registry.shadow_variants)
         self.today_candles = {}           # symbol -> completed candles, refreshed every cycle
         self.symbols = list(symbols)
         self.sectors = sectors
@@ -355,9 +356,10 @@ class LiveEngine:
         base_scores = (score_frame(self.baseline.model, self.baseline.features, frame)
                        if self.baseline is not None else [None] * len(rows))
         feature_rows = frame.to_dict("records")
+        variant_scores = self._variant_scores(frame, base_scores)
 
         decisions = []
-        for sig, sc, bsc, fv in zip(meta, scores, base_scores, feature_rows):
+        for i, (sig, sc, bsc, fv) in enumerate(zip(meta, scores, base_scores, feature_rows)):
             self.seen.add((sig["date"], sig["symbol"], sig["direction"]))
 
             entry_at = dt.datetime.combine(day, dt.datetime.strptime(sig["time"], "%H:%M:%S").time(),
@@ -391,6 +393,23 @@ class LiveEngine:
                 "baseline_threshold": round(self.baseline.threshold, 4) if self.baseline is not None else None,
                 "baseline_go": bool(bsc >= self.baseline.threshold) if bsc is not None else None,
                 "features": {k: (None if pd.isna(v) else float(v)) for k, v in fv.items()},
+                "variants": {v["name"]: {"version": v["version"], "threshold": round(v["threshold"], 4),
+                                         "score": round(float(s[i]), 4), "go": bool(s[i] >= v["threshold"])}
+                             for v in self.variants if (s := variant_scores.get(v["name"])) is not None},
             })
 
         return decisions
+
+    def _variant_scores(self, frame, base_scores):
+        """{variant name: scores} for the shadow variants. A variant that can't be scored
+        is skipped; it can never affect the champion's decisions."""
+        out = {}
+        for v in self.variants:
+            try:
+                if v.get("model") is not None:
+                    out[v["name"]] = score_frame(v["model"].model, v["model"].features, frame)
+                elif base_scores is not None and base_scores[0] is not None:
+                    out[v["name"]] = list(base_scores)
+            except Exception as e:              # noqa: BLE001 — shadow only
+                print(f"⚠️ shadow variant {v.get('name')} not scored: {type(e).__name__}: {e}")
+        return out

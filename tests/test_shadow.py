@@ -296,3 +296,16 @@ def test_a_restart_reloads_the_side_by_side_labels(day, tmp_path):
     b2 = shadow.ShadowBook(tmp_path / "s.csv", tmp_path / "o.csv", tmp_path / "t.json")
     b2.load(day)
     assert b2.alt[rule]["closed"].keys() == b1.alt[rule]["closed"].keys() and b2.open_symbols() == []
+
+
+def test_variant_decisions_are_logged_beside_each_signal(day, book):
+    import live_engine as LE  # noqa: F401
+    d = {"date": day.isoformat(), "time": "10:00:00", "symbol": "X", "direction": "BUY", "entry_price": 101.0,
+         "ORH": 100.5, "ORL": 99.5, "prev_close": 99.0, "score": 0.3, "threshold": 0.644, "decision": "SKIP",
+         "variants": {"v2.1": {"version": "v2.1", "threshold": 0.6454, "score": 0.66, "go": True},
+                      "v2@0.54": {"version": "v2@0.54", "threshold": 0.54, "score": 0.56, "go": True}}}
+    book.record([d], at(day, 10, 0, 20))
+    book.record([d], at(day, 10, 5, 20))                      # already logged: not again
+    v = shadow._read(book.variants_file)
+    assert len(v) == 2 and set(v["variant"]) == {"v2.1", "v2@0.54"} and v["go"].astype(str).eq("True").all()
+    assert "variants" not in shadow._read(book.signals_file).columns

@@ -300,3 +300,33 @@ def test_scorecard_compares_the_exit_rules_on_live_signals(open_client, files):
     assert ec["n"] == 2 and ec["go"]["cur"] == 0.4 and ec["go"]["alt"] == 0.6 and ec["all"]["better"] == 1
     html = open_client.get("/scorecard").get_data(as_text=True)
     assert "Exit rule side by side" in html and "10-min trail grace" in html
+
+
+def test_scorecard_shows_the_champion_and_the_shadow_variants(open_client, files, monkeypatch):
+    import pandas as pd
+    days = ["2026-10-08", "2026-10-09", "2026-10-12"]
+    sig, out, var = [], [], []
+    for i, d in enumerate(days):
+        for j, (score, pnl) in enumerate([(0.70, 0.9), (0.58, -0.2), (0.50, 0.4)]):
+            sid = f"{d}|S{j}|BUY"
+            sig.append({c: "" for c in shadow.SIGNAL_COLUMNS} | {"signal_id": sid, "date": d, "time": "10:00:00",
+                        "symbol": f"S{j}", "direction": "BUY", "score": score, "threshold": 0.644,
+                        "model_go": score >= 0.644, "baseline_go": score >= 0.644, "decision": "GO" if score >= 0.644 else "SKIP",
+                        "model_version": "v2", "source": "live"})
+            out.append({"signal_id": sid, "date": d, "status": "trailed", "exit_reason": "TRAIL", "exit_candle": "11:00:00",
+                        "exit_time": "11:05:00", "exit_price": 1, "pnl_pct": pnl, "profit": int(pnl > 0), "mfe_pct": 1,
+                        "mae_pct": -1, "labelled_at": f"{d}T11:05:20+05:30", "source": "live", "exit_stop": 1})
+            var.append({"signal_id": sid, "date": d, "time": "10:00:00", "variant": "v2@0.54", "version": "v2@0.54",
+                        "score": score, "threshold": 0.54, "go": score >= 0.54, "logged_at": f"{d}T10:00:20+05:30", "source": "live"})
+    pd.DataFrame(sig).to_csv(files / "s.csv", index=False)
+    pd.DataFrame(out).to_csv(files / "o.csv", index=False)
+    pd.DataFrame(var).to_csv(files / "shadow_variants.csv", index=False)
+    monkeypatch.setattr(shadow, "LIVE_DIR", files)
+    vs = webapp.variant_scorecard()
+    rows = {r["key"]: r for r in vs["rows"]}
+    assert rows["champion"]["n"] == 3 and rows["champion"]["days"] == 3 and rows["champion"]["mean"][0.0] == pytest.approx(0.9)
+    v = rows["v2@0.54"]
+    assert v["n"] == 6 and v["mean"][0.05] == pytest.approx(0.35 - 0.05) and v["worst_day"] == pytest.approx(0.7)
+    assert v["diff"] == pytest.approx(0.35 - 0.9) and not v["rule"]["enough"]
+    html = open_client.get("/scorecard").get_data(as_text=True)
+    assert "Champion vs shadow variants" in html and "v2@0.54 @ 0.540" in html and "not enough data yet" in html

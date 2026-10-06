@@ -193,3 +193,52 @@ def test_zero_prepared_symbols_is_not_a_holiday(day, breakout_day, monkeypatch):
     M.run_cycle(eng, {}, dry_run=True, now=at(day, 10, 0, 20))
     assert eng.day is None            # will prepare again next cycle
     assert not eng.prev               # so main's holiday check (needs engine.prev) can't fire
+
+
+# --- shadow variants: scored and logged, never deciding --------------------------------------
+
+class _M:
+    """A registry.Model stand-in."""
+    def __init__(self, p, feats, threshold, version):
+        self.model, self.features, self.threshold, self.version = FakeModel(p), feats, threshold, version
+
+
+def test_shadow_variants_never_change_the_champions_decision(setup, day):
+    source, feats = setup
+    base = _M(0.56, feats, 0.6441, "v2")
+    variants = [{"name": "v2.1", "version": "v2.1", "model": _M(0.70, feats[:-1], 0.6454, "v2.1"), "threshold": 0.6454},
+                {"name": "v2@0.54", "version": "v2@0.54", "model": None, "threshold": 0.54}]
+    plain = L.LiveEngine(source, FakeModel(0.3), feats, 0.5, ["X"], {}, baseline=base).cycle(at(day, 10, 20, 20))
+    with_v = L.LiveEngine(source, FakeModel(0.3), feats, 0.5, ["X"], {}, baseline=base,
+                          variants=variants).cycle(at(day, 10, 20, 20))
+    strip = lambda ds: [{k: v for k, v in d.items() if k not in ("variants", "features")} for d in ds]
+    assert strip(with_v) == strip(plain), [(k, a[k], b.get(k)) for a, b in zip(with_v, plain) for k in a
+                                            if k not in ("variants", "features") and a[k] != b.get(k)]
+    fa, fb = with_v[0]["features"], plain[0]["features"]       # NaN-aware: None or equal
+    assert fa.keys() == fb.keys() and all((fa[k] is None and fb[k] is None) or fa[k] == fb[k] for k in fa)
+    v = with_v[0]["variants"]
+    assert v["v2.1"] == {"version": "v2.1", "threshold": 0.6454, "score": 0.7, "go": True}
+    assert v["v2@0.54"] == {"version": "v2@0.54", "threshold": 0.54, "score": 0.56, "go": True}   # v2's own score
+    assert with_v[0]["decision"] == "SKIP"                                                          # champion unchanged
+
+
+def test_a_broken_variant_is_skipped_not_fatal(setup, day):
+    source, feats = setup
+
+    class Boom:
+        features = feats
+        def __getattr__(self, name):
+            raise RuntimeError("corrupt pickle")
+    d = L.LiveEngine(source, FakeModel(0.9), feats, 0.5, ["X"], {},
+                     variants=[{"name": "bad", "version": "x", "model": Boom(), "threshold": 0.5}]).cycle(at(day, 10, 20, 20))
+    assert d[0]["decision"] == "GO" and d[0]["variants"] == {}
+
+
+def test_registry_ships_v2_1_and_the_054_threshold_variant():
+    import registry
+    vs = {v["name"]: v for v in registry.shadow_variants()}
+    v21 = vs["v2.1"]["model"]
+    assert len(v21.features) == 25 and not {"entry_log", "orb_range_abs", "prev_close_vs_orb"} & set(v21.features)
+    assert set(v21.features) < set(registry.baseline().features)
+    assert v21.meta["trained_through"] == registry.baseline().trained_through
+    assert vs["v2@0.54"]["model"] is None and vs["v2@0.54"]["threshold"] == 0.54

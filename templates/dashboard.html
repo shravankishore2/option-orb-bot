@@ -283,6 +283,36 @@
             as labelled data (<code>shadow_outcomes.csv</code>) for the monthly challenger.</p>
         {% endif %}
 
+        {% set vs = sc.variants %}
+        <h3 class="sub">Champion vs shadow variants (live, paper)</h3>
+        {% if not vs or not vs.rows %}
+        <p class="footnote">v2.1 and v2 @ 0.54 are scored beside the champion on every live signal from their first
+            session; nothing has been logged yet. They decide nothing (docs/V2_1_PROTOCOL.md, docs/THRESHOLD_PROTOCOL.md).</p>
+        {% else %}
+        <div class="table-wrap full">
+            <table>
+                <thead><tr><th>Setup</th><th class="num">GO trades</th><th class="num">Days</th><th class="num">Hit</th>
+                    <th class="num">Mean</th><th class="num">after 0.05%</th><th class="num">after 0.10%</th>
+                    <th class="num">95% CI (after 0.05%)</th><th class="num">Worst day</th><th class="num">vs champion (95% CI)</th></tr></thead>
+                <tbody>
+                {% for r in vs.rows %}
+                <tr><td>{{ r.label }}</td><td class="num">{{ r.n }}</td><td class="num">{{ r.days }}</td>
+                    <td class="num">{% if r.hit is not none %}{{ "%.0f"|format(r.hit) }}%{% else %}—{% endif %}</td>
+                    <td class="num">{{ avg(r.mean[0.0]) }}</td><td class="num">{{ avg(r.mean[0.05]) }}</td><td class="num">{{ avg(r.mean[0.1]) }}</td>
+                    <td class="num">{% if r.ci05[0] is not none %}{{ "%+.3f"|format(r.ci05[0]) }}% to {{ "%+.3f"|format(r.ci05[1]) }}%{% else %}—{% endif %}</td>
+                    <td class="num">{% if r.worst_day is not none %}{{ avg(r.worst_day) }}{% else %}—{% endif %}</td>
+                    <td class="num">{% if r.diff is defined %}{{ avg(r.diff) }}{% if r.diff_ci[0] is not none %} ({{ "%+.3f"|format(r.diff_ci[0]) }} to {{ "%+.3f"|format(r.diff_ci[1]) }}){% endif %}{% else %}—{% endif %}</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="footnote">Live sessions only, from {{ vs.start }} ({{ vs.sessions }} so far). A variant replaces the champion only with
+            at least {{ vs.rule.min_trades }} live GO trades over at least {{ vs.rule.min_days }} trading days, a higher mean after
+            {{ vs.rule.cost }}% costs than the champion with the 95% CI of the difference excluding zero, (for the threshold) the
+            historical sweep agreeing, and the owner's approval.
+            {% for r in vs.rows if r.rule is defined %}{{ r.label }}: {{ "enough data" if r.rule.enough else "not enough data yet" }}{% if r.rule.enough %}, {{ "ahead" if r.rule.beats else "behind" }}, CI {{ "excludes" if r.rule.ci_excludes_zero else "includes" }} zero{% endif %}.{% if not loop.last %} {% endif %}{% endfor %}</p>
+        {% endif %}
+
         {% set ec = sc.exit_compare %}
         {% if ec %}
         <h3 class="sub">Exit rule side by side · current vs {{ ec.label }} (live, paper)</h3>

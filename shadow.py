@@ -47,6 +47,9 @@ LIVE_DIR = BASE_DIR / "data" / "live"
 SIGNALS_FILE = LIVE_DIR / "shadow_signals.csv"
 OUTCOMES_FILE = LIVE_DIR / "shadow_outcomes.csv"
 TRACKER_FILE = LIVE_DIR / "tracker.json"
+VARIANTS_FILE = LIVE_DIR / "shadow_variants.csv"     # shadow model/threshold variants' decisions
+VARIANT_COLUMNS = ["signal_id", "date", "time", "variant", "version", "score", "threshold", "go",
+                   "logged_at", "source"]
 
 CANDLE = dt.timedelta(minutes=C.CANDLE_MINUTES)
 MIN_SAMPLE = 30                     # below this a hit rate is too noisy to read
@@ -165,10 +168,11 @@ class ShadowBook:
     """Today's shadow signals and their state. One per session."""
 
     def __init__(self, signals_file=None, outcomes_file=None, tracker_file=None,
-                 shadow_rules=exits.SHADOW_RULES):
+                 shadow_rules=exits.SHADOW_RULES, variants_file=None):
         self.signals_file = Path(signals_file or SIGNALS_FILE)
         self.outcomes_file = Path(outcomes_file or OUTCOMES_FILE)
         self.tracker_file = Path(tracker_file or TRACKER_FILE)
+        self.variants_file = Path(variants_file or (self.signals_file.parent / VARIANTS_FILE.name))
         self.day = None
         self.signals = {}            # signal_id -> signal row (as logged)
         self.closed = {}             # signal_id -> outcome row (exits.CURRENT_RULE)
@@ -194,19 +198,25 @@ class ShadowBook:
         """Log new signals at signal time. Returns how many were new."""
         if self.day != now.date():
             self.load(now.date())
-        rows = []
+        rows, var_rows = [], []
         for d in decisions:
             sid = signal_id(d["date"], d["symbol"], d["direction"])
             if sid in self.signals:
                 continue
             feats = d.get("features") or {}
-            row = {**{k: v for k, v in d.items() if k != "features"},
+            for name, v in (d.get("variants") or {}).items():
+                var_rows.append({"signal_id": sid, "date": d["date"], "time": d["time"], "variant": name,
+                                 "version": v.get("version"), "score": v.get("score"),
+                                 "threshold": v.get("threshold"), "go": bool(v.get("go")),
+                                 "logged_at": now.isoformat(timespec="seconds"), "source": source})
+            row = {**{k: v for k, v in d.items() if k not in ("features", "variants")},
                    "signal_id": sid, "model_go": bool(d["score"] >= d["threshold"]),
                    "logged_at": now.isoformat(timespec="seconds"), "source": source,
                    **{f"x_{f}": feats.get(f) for f in FEATURE_COLUMNS}}
             self.signals[sid] = row
             rows.append(row)
         _append(self.signals_file, SIGNAL_COLUMNS, rows)
+        _append(self.variants_file, VARIANT_COLUMNS, var_rows)
         return len(rows)
 
     def _open_anywhere(self, sid):

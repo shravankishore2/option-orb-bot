@@ -293,6 +293,13 @@ def main():
     print(f"🧠 Champion {champ.version}: trained through {champ.trained_through or '?'}, "
           f"threshold {champ.threshold:.3f}, {len(champ.features)} features")
     print(f"🧊 Baseline {baseline.version} (frozen) scores every signal alongside it")
+    try:                                         # shadow variants decide nothing; never fatal
+        variants = registry.shadow_variants()
+        print("👥 Shadow variants (logged only): " + ", ".join(f"{v['name']} (GO >= {v['threshold']:.3f})"
+                                                           for v in variants))
+    except Exception as e:                       # noqa: BLE001
+        variants = []
+        print(f"⚠️ shadow variants not loaded: {type(e).__name__}: {e}")
 
     if not a.dry_run:
         try:
@@ -302,7 +309,8 @@ def main():
             return 1
 
     engine = LiveEngine(DhanSource(), champ.model, champ.features, champ.threshold,
-                        get_symbols(), sector_map(), version=champ.version, baseline=baseline)
+                        get_symbols(), sector_map(), version=champ.version, baseline=baseline,
+                        variants=variants)
     lots = lot_sizes()
     if a.dry_run:
         dry = shadow.LIVE_DIR / "dryrun"

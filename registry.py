@@ -72,6 +72,25 @@ def baseline():
     return Model(BASELINE_VERSION, BASELINE_FILE, _read_json(BASELINE_META))
 
 
+VARIANTS_DIR = MODELS / "variants"
+V2_THRESHOLD_VARIANT = 0.54          # docs/THRESHOLD_PROTOCOL.md, step 6
+
+
+def shadow_variants():
+    """Variants scored beside the champion on every live signal; they decide nothing
+    (docs/V2_1_PROTOCOL.md, docs/THRESHOLD_PROTOCOL.md). Each is a dict:
+    name, version, threshold, and either its own `model` or None (= the frozen v2
+    baseline's score, compared with its own threshold)."""
+    out = []
+    p = VARIANTS_DIR / "v2.1.pkl"
+    if p.exists():
+        m = Model("v2.1", p, _read_json(VARIANTS_DIR / "v2.1.json"))
+        out.append({"name": "v2.1", "version": "v2.1", "model": m, "threshold": m.threshold})
+    out.append({"name": "v2@0.54", "version": f"{BASELINE_VERSION}@{V2_THRESHOLD_VARIANT}", "model": None,
+                "threshold": V2_THRESHOLD_VARIANT})
+    return out
+
+
 def champion():
     """The model whose GO decisions are live (the baseline until one is promoted)."""
     info = _read_json(CHAMPION_FILE)

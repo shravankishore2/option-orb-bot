@@ -26,6 +26,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from flask import (Flask, Response, abort, g, jsonify, render_template, request, redirect,
                    stream_with_context, url_for)
@@ -776,6 +777,82 @@ def exit_rule_comparison(rule=None):
             "all": side(df), "go": side(df[df["decision"] == "GO"])}
 
 
+VARIANT_RULE = {"min_trades": 50, "min_days": 15, "cost": 0.05}    # docs/THRESHOLD_PROTOCOL.md, step 7
+
+
+def _day_boot(days, pnl, reps=4000, seed=5, other=None):
+    """95% day-block bootstrap CI of mean P&L per trade (or of the difference of two
+    per-trade means when `other` = (days, pnl) of the comparison set)."""
+    rng = np.random.default_rng(seed)
+    uniq = sorted(set(days) | (set(other[0]) if other is not None else set()))
+    if len(uniq) < 2:
+        return None, None
+    ix = {d: i for i, d in enumerate(uniq)}
+
+    def sums(ds, ps):
+        s, n = np.zeros(len(uniq)), np.zeros(len(uniq))
+        np.add.at(s, [ix[d] for d in ds], ps)
+        np.add.at(n, [ix[d] for d in ds], 1)
+        return s, n
+    s1, n1 = sums(days, pnl)
+    s2, n2 = sums(*other) if other is not None else (None, None)
+    out = []
+    for _ in range(reps):
+        k = rng.integers(0, len(uniq), len(uniq))
+        m = s1[k].sum() / max(n1[k].sum(), 1)
+        if other is not None:
+            m -= s2[k].sum() / max(n2[k].sum(), 1)
+        out.append(m)
+    return float(np.percentile(out, 2.5)), float(np.percentile(out, 97.5))
+
+
+def variant_scorecard():
+    """The champion vs the shadow variants on the same live sessions: only `source = live`
+    signals labelled under the current exit rule, from the first variant-logged day."""
+    vf = shadow.LIVE_DIR / "shadow_variants.csv"
+    if not vf.exists():
+        return None
+    v = shadow._read(vf)
+    s, o = shadow._read(shadow.SIGNALS_FILE), shadow._read(shadow.OUTCOMES_FILE)
+    if v.empty or s.empty:
+        return None
+    v = v[v["source"] == "live"]
+    start = v["date"].min() if not v.empty else None
+    s = s[(s["source"] == "live") & (s["date"] >= start)].drop_duplicates("signal_id")
+    out = o.drop_duplicates("signal_id")[["signal_id", "pnl_pct"]] if not o.empty else pd.DataFrame(columns=["signal_id", "pnl_pct"])
+    sets = {"champion": s.loc[s["model_go"].astype(str).isin(["True", "true", "1"]), ["signal_id", "date"]]}
+    labels = {"champion": f"Champion ({s['model_version'].iloc[0] if len(s) else 'v2'} @ "
+                          f"{float(s['threshold'].iloc[0]) if len(s) else 0.644:.3f})"}
+    for name, g in v.groupby("variant"):
+        sets[name] = g.loc[g["go"].astype(str).isin(["True", "true", "1"]), ["signal_id", "date"]]
+        labels[name] = f"{name} @ {float(g['threshold'].iloc[0]):.3f}"
+    trades = {k: x.merge(out, on="signal_id").assign(pnl=lambda d: pd.to_numeric(d["pnl_pct"], errors="coerce")).dropna(subset=["pnl"])
+              for k, x in sets.items()}
+    champ = trades["champion"]
+    rows = []
+    for k, t in trades.items():
+        n, days = len(t), t["date"].nunique()
+        mean = float(t["pnl"].mean()) if n else None
+        lo, hi = _day_boot(t["date"].tolist(), t["pnl"].to_numpy()) if n else (None, None)
+        row = {"key": k, "label": labels[k], "n": n, "days": days,
+               "hit": float((t["pnl"] > 0).mean() * 100) if n else None,
+               "mean": {c: (mean - c if mean is not None else None) for c in COST_LEVELS},
+               "ci05": (lo - 0.05, hi - 0.05) if lo is not None else (None, None),
+               "worst_day": float(t.groupby("date")["pnl"].sum().min()) if n else None}
+        if k != "champion" and n and len(champ):
+            d = mean - float(champ["pnl"].mean())
+            dlo, dhi = _day_boot(t["date"].tolist(), t["pnl"].to_numpy(),
+                                 other=(champ["date"].tolist(), champ["pnl"].to_numpy()))
+            row.update(diff=d, diff_ci=(dlo, dhi),
+                       rule={"enough": n >= VARIANT_RULE["min_trades"] and days >= VARIANT_RULE["min_days"],
+                             "beats": d > 0, "ci_excludes_zero": dlo is not None and (dlo > 0 or dhi < 0)})
+        rows.append(row)
+    return {"start": start, "rows": rows, "sessions": int(s["date"].nunique()), "rule": VARIANT_RULE}
+
+
+COST_LEVELS = (0.0, 0.05, 0.10)
+
+
 def scorecard_view(by):
     df = shadow.labelled_rows()
     signals = shadow._read(shadow.SIGNALS_FILE)
@@ -796,7 +873,8 @@ def scorecard_view(by):
             "scored_by": scored_by, "min_sample": shadow.MIN_SAMPLE, "costs": C.COST_SENSITIVITY,
             "comparisons": list(reversed(registry.comparisons()))[:12],
             "drift": read_json(str(shadow.LIVE_DIR / "drift.json")),
-            "skips": skip_report(df, signals), "exit_compare": exit_rule_comparison()}
+            "skips": skip_report(df, signals), "exit_compare": exit_rule_comparison(),
+            "variants": variant_scorecard()}
 
 
 @app.route("/scorecard")
