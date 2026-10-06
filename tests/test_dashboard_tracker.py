@@ -126,7 +126,12 @@ def _live_files(files, monkeypatch, extra=()):
                 "decision": "GO" if go else "SKIP", "price": price, "pnl_pct": pnl,
                 "initial_stop": initial, "trail_stop": stop_now, "exit_stop": stop_now if closed else None,
                 "best_pct": abs(pnl) + 0.1, "worst_pct": -0.2, "status": status,
-                "status_label": "stopped out (trailing stop)" if closed else "open", "exit_time": exit_time}
+                "status_label": "stopped out (trailing stop)" if closed else "open", "exit_time": exit_time,
+                # under the what-if rule every position is still open, 0.11% better
+                "alt": {"exit_v2_grace10": {"status": "open", "status_label": "open", "price": price,
+                                            "pnl_pct": pnl + 0.11, "initial_stop": initial, "trail_stop": initial,
+                                            "exit_stop": None, "best_pct": abs(pnl) + 0.2, "worst_pct": -0.2,
+                                            "exit_time": None}}}
     snap = {"day": day, "as_of": f"{day}T14:20:20+05:30", "version": "v",
             "rows": [row("DMART", "SELL", True, 3587.1, 1.06, 3686.0, 3648.7),
                      row("KALYANKJIL", "BUY", False, 562.0, 2.07, 542.6, 551.05),
@@ -226,3 +231,57 @@ def test_skip_report_after_close(open_client, files):
     assert rep["rho"] == 1.0 and rep["go_n"] == 1                # higher score, better outcome, today
     html = open_client.get("/scorecard").get_data(as_text=True)
     assert "Skipped signals · 2026-10-05" in html and "2/3" in html and "1 still open" in html
+
+
+# --- exit-rule toggle, side-by-side comparison, ticker chips -----------------------------
+
+def test_the_live_view_shows_the_current_rule_by_default_with_a_what_if_toggle(open_client, files, monkeypatch):
+    _live_files(files, monkeypatch)
+    cur = open_client.get("/live").get_data(as_text=True)
+    assert "+2.07%" in cur and "What-if view" not in cur and "10-min trail grace" in cur
+    rows = {r[0]: r[2] for r in _bodies(cur)}
+    assert "Trailed out" in rows["MARICO"]
+    alt = open_client.get("/live?rule=exit_v2_grace10").get_data(as_text=True)
+    arows = {r[0]: r[2] for r in _bodies(alt)}
+    assert "What-if view" in alt and "+2.18%" in arows["KALYANKJIL"] and "Open" in arows["MARICO"]
+    assert 'href="/live?time=10:30&amp;rule=exit_v2_grace10"' in alt                  # time links keep the rule
+    assert "What-if view" not in open_client.get("/live?rule=nonsense").get_data(as_text=True)
+
+
+def test_ticker_chips_in_time_order_with_go_and_direction(open_client, files, monkeypatch):
+    import exits  # noqa: F401
+    _live_files(files, monkeypatch)
+    html = open_client.get("/live").get_data(as_text=True)
+    chips = re.findall(r'data-filter="ticker" data-value="([^"]+)"', html)
+    assert chips == ["all", "KALYANKJIL", "DMART", "MARICO"]                        # first-signal time order
+    dm = html.split('data-value="DMART"')[0].rsplit("<button", 1)[1]
+    assert "tchip-go" in dm
+    assert 'tdir tdir-sell' in html.split('data-value="DMART"')[1].split("</button>")[0]
+    assert 'id="live-tickers"' in open_client.get("/live?fragment=1").get_data(as_text=True)
+    assert webapp.ticker_chips([{"symbol": "A", "time": "10:00:00", "direction": "BUY", "decision": "SKIP"},
+                                {"symbol": "A", "time": "11:00:00", "direction": "SELL", "decision": "GO"}]) == \
+        [{"symbol": "A", "time": "10:00", "dirs": ["BUY", "SELL"], "go": True}]
+
+
+def test_scorecard_compares_the_exit_rules_on_live_signals(open_client, files):
+    import pandas as pd
+    import exits
+    day = "2026-10-06"
+    s = pd.DataFrame([{c: "" for c in shadow.SIGNAL_COLUMNS}] * 2)
+    s["signal_id"] = [f"{day}|A|BUY", f"{day}|B|BUY"]
+    s["date"], s["time"], s["symbol"], s["direction"], s["source"] = day, "10:00:00", ["A", "B"], "BUY", "live"
+    s["decision"], s["model_go"], s["baseline_go"] = ["GO", "SKIP"], [True, False], [True, False]
+    s["score"], s["threshold"], s["model_version"] = [0.7, 0.5], 0.644, "v2"
+    s.to_csv(files / "s.csv", index=False)
+
+    def out(pnls):
+        return pd.DataFrame({"signal_id": s["signal_id"], "date": day, "status": "trailed", "exit_reason": "TRAIL",
+                             "exit_candle": "11:00:00", "exit_time": "11:05:00", "exit_price": 1, "pnl_pct": pnls,
+                             "profit": 0, "mfe_pct": 1, "mae_pct": -1, "labelled_at": f"{day}T11:05:20+05:30",
+                             "source": "live", "exit_stop": 1})
+    out([0.4, -0.2]).to_csv(files / "o.csv", index=False)
+    out([0.6, -0.2]).to_csv(shadow.alt_outcomes_file(files / "o.csv", exits.SHADOW_RULES[0]), index=False)
+    ec = webapp.exit_rule_comparison()
+    assert ec["n"] == 2 and ec["go"]["cur"] == 0.4 and ec["go"]["alt"] == 0.6 and ec["all"]["better"] == 1
+    html = open_client.get("/scorecard").get_data(as_text=True)
+    assert "Exit rule side by side" in html and "10-min trail grace" in html

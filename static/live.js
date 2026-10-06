@@ -7,7 +7,7 @@
   const KEY = "orbital-live-view";
   const STATUS_ORDER = { open: 0, target: 1, trailed: 2, stopped: 3, eod: 4, "": 5 };
 
-  let view = { decision: "all", dir: "all", state: "all", sort: null, desc: false, open: [] };
+  let view = { decision: "all", dir: "all", state: "all", sort: null, desc: false, open: [], tickers: [], tickersOpen: false };
   try { Object.assign(view, JSON.parse(sessionStorage.getItem(KEY) || "{}")); } catch (e) {}
   const save = () => { try { sessionStorage.setItem(KEY, JSON.stringify(view)); } catch (e) {} };
 
@@ -49,7 +49,8 @@
     groups().forEach((tb) => {
       const ok = (view.decision === "all" || tb.dataset.decision === view.decision) &&
                  (view.dir === "all" || tb.dataset.dir === view.dir) &&
-                 (view.state === "all" || tb.dataset.state === view.state);
+                 (view.state === "all" || tb.dataset.state === view.state) &&
+                 (!view.tickers.length || view.tickers.includes(tb.dataset.symbol));
       tb.hidden = !ok;
       if (ok) shown += 1;
     });
@@ -61,9 +62,19 @@
       if (tb.dataset.decision === "GO") { seenGo = true; return; }
       if (seenGo && !marked) { tb.classList.add("first-skip"); marked = true; }
     });
-    document.querySelectorAll(".chip").forEach((c) => {
-      c.setAttribute("aria-pressed", String(view[c.dataset.filter] === c.dataset.value));
+    document.querySelectorAll(".chip[data-filter]").forEach((c) => {
+      const on = c.dataset.filter === "ticker"
+        ? (c.dataset.value === "all" ? !view.tickers.length : view.tickers.includes(c.dataset.value))
+        : view[c.dataset.filter] === c.dataset.value;
+      c.setAttribute("aria-pressed", String(on));
     });
+    const bar = document.getElementById("live-tickers");
+    if (bar) {                                          // phones: a collapsible row
+      bar.classList.toggle("open", view.tickersOpen);
+      const t = bar.querySelector(".ticker-toggle");
+      t.setAttribute("aria-expanded", String(view.tickersOpen));
+      t.querySelector(".ticker-selected").textContent = view.tickers.length ? ` · ${view.tickers.length} selected` : "";
+    }
     const total = groups().length;
     const count = document.getElementById("sig-count");
     if (count) count.textContent = total ? `Showing ${shown} of ${total} signals` : "";
@@ -86,9 +97,19 @@
 
   // one set of listeners on the document: rows are replaced on every refresh
   document.addEventListener("click", (e) => {
-    const chip = e.target.closest(".chip");
+    const chip = e.target.closest(".chip[data-filter]");
     if (chip) {
-      view[chip.dataset.filter] = chip.dataset.value;
+      const v = chip.dataset.value;
+      if (chip.dataset.filter === "ticker") {          // several at once; again (or All) clears
+        view.tickers = v === "all" ? [] : view.tickers.includes(v) ? view.tickers.filter((x) => x !== v) : view.tickers.concat(v);
+      } else {
+        view[chip.dataset.filter] = v;
+      }
+      save(); applyFilters();
+      return;
+    }
+    if (e.target.closest(".ticker-toggle")) {
+      view.tickersOpen = !view.tickersOpen;
       save(); applyFilters();
       return;
     }
@@ -119,7 +140,7 @@
       if (r.status === 401 || r.redirected) { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search); return; }
       if (!r.ok) return;
       const doc = new DOMParser().parseFromString(await r.text(), "text/html");
-      for (const id of ["live-strip", "live-table"]) {
+      for (const id of ["live-tickers", "live-strip", "live-table"]) {
         const fresh = doc.getElementById(id), old = document.getElementById(id);
         if (fresh && old) old.replaceWith(fresh);
       }

@@ -9,7 +9,24 @@
 {%- macro signed(raw, text) -%}
     {%- if raw is not none and raw != "" -%}<span class="{{ 'pos' if raw >= 0 else 'neg' }}">{{ text }}</span>{%- else -%}—{%- endif -%}
 {%- endmacro -%}
-{%- if part != "table" %}
+{%- if part == "tickers" or not part %}
+<div id="live-tickers" class="ticker-bar" data-count="{{ tickers|length }}">
+    <button type="button" class="ticker-toggle" aria-expanded="false" aria-controls="ticker-chips">
+        Tickers ({{ tickers|length }})<span class="ticker-selected"></span>
+    </button>
+    <div class="ticker-chips" id="ticker-chips" role="group" aria-label="Tickers that signalled today, in time order">
+        <span class="filter-label" aria-hidden="true">TICKERS</span>
+        <button type="button" class="chip tchip" data-filter="ticker" data-value="all" aria-pressed="true">All</button>
+        {% for t in tickers %}
+        <button type="button" class="chip tchip{% if t.go %} tchip-go{% endif %}" data-filter="ticker" data-value="{{ t.symbol }}"
+                aria-pressed="false" title="first signal {{ t.time }}{% if t.go %} · GO{% endif %}"
+                aria-label="{{ t.symbol }}, {{ ' and '.join(t.dirs)|lower }}{% if t.go %}, GO{% endif %}"
+                >{% for d in t.dirs %}<span class="tdir tdir-{{ d|lower }}" aria-hidden="true">{{ "▲" if d == "BUY" else "▼" }}</span>{% endfor %}{{ t.symbol }}</button>
+        {% endfor %}
+    </div>
+</div>
+{%- endif %}
+{%- if part == "strip" or not part %}
 <div id="live-strip">
     {% set sm = summary %}
     <section class="stats-row" aria-label="Today's signals">
@@ -24,7 +41,7 @@
     </section>
 </div>
 {%- endif %}
-{%- if part != "strip" %}
+{%- if part == "table" or not part %}
 <div id="live-table" data-count="{{ signals|length }}">
 
     {% if legacy %}

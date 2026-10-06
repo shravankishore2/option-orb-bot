@@ -67,11 +67,13 @@
         <div class="filter-label" id="time-label">UP TO TIME</div>
         <div class="time-buttons" role="group" aria-labelledby="time-label">
             {% for t in time_filters %}
-            <a href="{{ tab_url('live', time=t) }}" class="time-btn {% if selected_time == t %}active{% endif %}"
+            <a href="{{ tab_url('live', time=t, **({'rule': rule} if rule != current_rule else {})) }}" class="time-btn {% if selected_time == t %}active{% endif %}"
                {% if selected_time == t %}aria-current="true"{% endif %}>{{ t }}</a>
             {% endfor %}
         </div>
     </section>
+
+    {% with part = "tickers" %}{% include "live_fragment.html" %}{% endwith %}
 
     <section class="chip-bar" aria-label="Show signals">
         <div class="chip-group" role="group" aria-label="Decision">
@@ -89,8 +91,21 @@
             <button type="button" class="chip" data-filter="state" data-value="open" aria-pressed="false">Open</button>
             <button type="button" class="chip" data-filter="state" data-value="closed" aria-pressed="false">Closed</button>
         </div>
+        <div class="chip-group rule-toggle" role="group" aria-label="Exit rule">
+            {% for r, label in rule_options %}
+            <a href="{{ tab_url('live', time=selected_time, **({'rule': r} if r != current_rule else {})) }}"
+               class="chip{% if r != current_rule %} what-if{% endif %}{% if r == rule %} on{% endif %}"
+               {% if r == rule %}aria-current="true"{% endif %}
+               title="{{ 'The live exit rule' if r == current_rule else 'What-if: the same signals under this exit rule (paper, tracked side by side)' }}">{{ label }}{% if r != current_rule %} <small>what-if</small>{% endif %}</a>
+            {% endfor %}
+        </div>
         <p class="chip-count" id="sig-count" aria-live="polite"></p>
     </section>
+    {% if rule != current_rule %}
+    <div class="banner what-if-banner" role="note">What-if view: every signal's outcome under the
+        <strong>{{ dict(rule_options)[rule] }}</strong> exit rule, tracked on paper beside the live rule.
+        Telegram signals, the model and the scorecard still use the current rule.</div>
+    {% endif %}
 
     {% with part = "table" %}{% include "live_fragment.html" %}{% endwith %}
 
@@ -264,6 +279,32 @@
         <p class="footnote">One session is far too few to judge the filter (under {{ sc.min_sample }} signals a rate is noise);
             this is a daily read-out, and the cumulative numbers above are what count. Completed SKIPs are stored
             as labelled data (<code>shadow_outcomes.csv</code>) for the monthly challenger.</p>
+        {% endif %}
+
+        {% set ec = sc.exit_compare %}
+        {% if ec %}
+        <h3 class="sub">Exit rule side by side · current vs {{ ec.label }} (live, paper)</h3>
+        {% if not ec.n %}
+        <p class="footnote">No live signal has been labelled under both rules yet. Every live signal is walked under
+            the current rule and the {{ ec.label }} rule ({{ ec.rule }}); the live rule changes only after
+            the walk-forward backtest (docs/EXIT_GRACE.md) and weeks of this comparison both favour it, and an explicit decision.</p>
+        {% else %}
+        <div class="table-wrap full">
+            <table>
+                <thead><tr><th>Signals</th><th class="num">n</th><th class="num">Current rule</th><th class="num">{{ ec.label }}</th>
+                    <th class="num">Changed</th><th class="num">Better / worse</th></tr></thead>
+                <tbody>
+                {% for name, x in [("All live signals", ec.all), ("GO only", ec.go)] %}
+                <tr><td>{{ name }}</td><td class="num">{{ n(x) }}</td><td class="num">{{ avg(x.cur) }}</td><td class="num">{{ avg(x.alt) }}</td>
+                    <td class="num">{{ x.changed }}</td><td class="num">{{ x.better }} / {{ x.worse }}</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="footnote">{{ ec.sessions }} live session(s) from {{ ec.first }}. Mean P&amp;L per trade, gross. The live rule stays
+            the current one until the walk-forward backtest (docs/EXIT_GRACE.md) and weeks of this comparison both favour the
+            alternative, and it is explicitly approved. Neither the model nor its training data use these outcomes.</p>
+        {% endif %}
         {% endif %}
 
         <h3 class="sub">Training / serving skew (weekly)</h3>

@@ -1036,3 +1036,30 @@ th[aria-sort="descending"] .sort i::after { content: "↓"; opacity: 1; }
 
 /* guest (read-only demo) */
 .banner.guest-banner { border-color: var(--blue); background: rgba(92, 200, 255, 0.10); color: var(--text); }
+
+/* ticker chips: every ticker that signalled today, in time order; GO highlighted */
+.ticker-bar { margin: 4px 0 10px; }
+.ticker-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ticker-chips .filter-label { margin-right: 6px; }
+.tchip { min-height: 28px; padding: 3px 10px; font-size: 12px; border-radius: 14px; }
+.tchip-go { border-color: var(--green); color: var(--text); background: rgba(32, 228, 134, 0.08); font-weight: 700; }
+.tchip-go[aria-pressed="true"] { background: rgba(32, 228, 134, 0.22); border-color: var(--green); }
+.tdir { font-size: 9px; margin-right: 3px; }
+.tdir-buy { color: var(--green); }
+.tdir-sell { color: #ff6874; }
+.ticker-toggle { display: none; }
+.chip.on { background: rgba(92, 200, 255, 0.14); border-color: var(--blue); color: var(--text); }
+.chip.what-if small { font-size: 10px; color: var(--amber); margin-left: 4px; }
+.rule-toggle .chip { text-decoration: none; }
+.banner.what-if-banner { border-color: var(--amber); background: rgba(246, 185, 59, 0.08); color: var(--text); }
+@media (max-width: 767px) {
+    .ticker-toggle { display: inline-flex; align-items: center; min-height: 40px; padding: 6px 14px; border-radius: 20px;
+                     font: inherit; font-size: 13px; cursor: pointer; background: var(--panel); color: var(--text);
+                     border: 1px solid var(--border); }
+    .ticker-toggle::after { content: "▾"; margin-left: 8px; color: var(--muted-2); }
+    .ticker-bar.open .ticker-toggle::after { content: "▴"; }
+    .ticker-bar:not(.open) .ticker-chips { display: none; }
+    .ticker-chips { margin-top: 8px; }
+    .ticker-chips .filter-label { display: none; }
+    .tchip { min-height: 36px; }
+}

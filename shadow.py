@@ -15,6 +15,9 @@ Files (data/live/, git-ignored):
                         or the end of the session). That row is the label. It also
                         keeps the stop in force at the exit (exit_stop), so the
                         tracker can show it after the position has closed.
+  shadow_outcomes_<rule>.csv
+                        the same, under each exit rule in exits.SHADOW_RULES
+                        (tracked side by side; training never reads these).
   tracker.json          today's signals with their live state, rewritten every
                         cycle; the dashboard pushes it to the browser.
 
@@ -118,12 +121,13 @@ def _when(day, hhmmss, tz):
     return dt.datetime.combine(day, dt.datetime.strptime(hhmmss, "%H:%M:%S").time(), tzinfo=tz)
 
 
-def walk(sig, candles, now):
+def walk(sig, candles, now, rule=None):
     """Run the exit engine over a signal's completed candles up to `now`.
 
     Returns a dict: closed (bool), reason, pnl_pct, current/exit price, stop in
     force, best/worst move (%; favourable positive), exit candle — or None when
-    no candle after entry has completed yet.
+    no candle after entry has completed yet. rule: an exits.RULES name (default:
+    exits.CURRENT_RULE).
     """
     entry_t = dt.datetime.strptime(sig["time"], "%H:%M:%S").time()
     after = candles[candles.index.time >= entry_t]
@@ -137,7 +141,7 @@ def walk(sig, candles, now):
     hi, lo, cl = (after[c].to_numpy(float) for c in ("High", "Low", "Close"))
     state = {}
     res = exits.simulate(hi, lo, cl, [t.time() for t in after.index],
-                         entry, orh, orl, sig["direction"], state=state)
+                         entry, orh, orl, sig["direction"], state=state, rule=rule or exits.CURRENT_RULE)
     if res is None:                                          # zero-width range: never tradable
         return None
     pnl, reason, i = res
@@ -160,14 +164,18 @@ def walk(sig, candles, now):
 class ShadowBook:
     """Today's shadow signals and their state. One per session."""
 
-    def __init__(self, signals_file=None, outcomes_file=None, tracker_file=None):
+    def __init__(self, signals_file=None, outcomes_file=None, tracker_file=None,
+                 shadow_rules=exits.SHADOW_RULES):
         self.signals_file = Path(signals_file or SIGNALS_FILE)
         self.outcomes_file = Path(outcomes_file or OUTCOMES_FILE)
         self.tracker_file = Path(tracker_file or TRACKER_FILE)
         self.day = None
         self.signals = {}            # signal_id -> signal row (as logged)
-        self.closed = {}             # signal_id -> outcome row
+        self.closed = {}             # signal_id -> outcome row (exits.CURRENT_RULE)
         self.live = {}               # signal_id -> latest walk() for open positions
+        # the same, per side-by-side exit rule: {rule: {"file", "closed", "live"}}
+        self.alt = {r: {"file": alt_outcomes_file(self.outcomes_file, r), "closed": {}, "live": {}}
+                    for r in shadow_rules}
 
     # -- session bookkeeping
     def load(self, day):
@@ -177,6 +185,10 @@ class ShadowBook:
         d = day.isoformat()
         self.signals = {r["signal_id"]: r for r in s[s["date"] == d].to_dict("records")} if not s.empty else {}
         self.closed = {r["signal_id"]: r for r in o[o["date"] == d].to_dict("records")} if not o.empty else {}
+        for a in self.alt.values():
+            ao = _read(a["file"])
+            a["live"] = {}
+            a["closed"] = {r["signal_id"]: r for r in ao[ao["date"] == d].to_dict("records")} if not ao.empty else {}
 
     def record(self, decisions, now, source="live"):
         """Log new signals at signal time. Returns how many were new."""
@@ -197,8 +209,11 @@ class ShadowBook:
         _append(self.signals_file, SIGNAL_COLUMNS, rows)
         return len(rows)
 
+    def _open_anywhere(self, sid):
+        return sid not in self.closed or any(sid not in a["closed"] for a in self.alt.values())
+
     def open_symbols(self):
-        return sorted({r["symbol"] for sid, r in self.signals.items() if sid not in self.closed})
+        return sorted({r["symbol"] for sid, r in self.signals.items() if self._open_anywhere(sid)})
 
     # -- every cycle
     def update(self, candles_by_symbol, now, final=False):
@@ -209,41 +224,41 @@ class ShadowBook:
         """
         if self.day != now.date():
             self.load(now.date())
-        new = []
+        new, new_alt = [], {r: [] for r in self.alt}
         for sid, sig in self.signals.items():
-            if sid in self.closed:
+            if not self._open_anywhere(sid):
                 continue
             g = candles_by_symbol.get(sig["symbol"])
             if g is None or g.empty:
                 continue
-            w = walk(sig, g, now)
-            if w is None:
-                continue
-            if w["closed"] or final:
-                new.append(self._label(sid, sig, w, now))
-            else:
-                self.live[sid] = w
+            if sid not in self.closed:
+                w = walk(sig, g, now)
+                if w is not None:
+                    if w["closed"] or final:
+                        new.append(self._label(sid, sig, w, now))
+                    else:
+                        self.live[sid] = w
+            for rule, a in self.alt.items():                 # side by side; never touches the label above
+                if sid in a["closed"]:
+                    continue
+                w = walk(sig, g, now, rule=rule)
+                if w is None:
+                    continue
+                if w["closed"] or final:
+                    row = _outcome_row(sid, sig, w, now)
+                    a["closed"][sid] = row
+                    a["live"].pop(sid, None)
+                    new_alt[rule].append(row)
+                else:
+                    a["live"][sid] = w
         _append(self.outcomes_file, OUTCOME_COLUMNS, new)
+        for rule, rows in new_alt.items():
+            _append(self.alt[rule]["file"], OUTCOME_COLUMNS, rows)
         self.write_tracker(now)
         return new
 
     def _label(self, sid, sig, w, now):
-        exit_end = w["exit_candle"] + CANDLE
-        entry_at = _when(now.date(), sig["time"], now.tzinfo)
-        # The label may only exist once its outcome is complete and observable.
-        if exit_end > now:
-            raise AssertionError(f"{sid}: label before its exit candle completed ({exit_end} > {now})")
-        if w["exit_candle"] < entry_at:
-            raise AssertionError(f"{sid}: exit candle before entry")
-        row = {
-            "signal_id": sid, "date": sig["date"], "status": STATUS[w["reason"]],
-            "exit_reason": w["reason"], "exit_candle": w["exit_candle"].strftime("%H:%M:%S"),
-            "exit_time": exit_end.strftime("%H:%M:%S"), "exit_price": round(w["price"], 2),
-            "pnl_pct": round(w["pnl_pct"], 4), "profit": int(w["pnl_pct"] > 0),
-            "mfe_pct": round(w["mfe_pct"], 4), "mae_pct": round(w["mae_pct"], 4),
-            "labelled_at": now.isoformat(timespec="seconds"), "source": sig.get("source", "live"),
-            "exit_stop": round(w["stop"], 4),            # the stop in force when it closed
-        }
+        row = _outcome_row(sid, sig, w, now)
         self.closed[sid] = row
         self.live.pop(sid, None)
         return row
@@ -252,32 +267,15 @@ class ShadowBook:
     def tracker_rows(self):
         out = []
         for sid, s in sorted(self.signals.items(), key=lambda kv: (kv[1]["time"], kv[1]["symbol"])):
-            o, w = self.closed.get(sid), self.live.get(sid)
-            entry = float(s["entry_price"])
-            row = {
-                "id": sid, "symbol": s["symbol"], "time": s["time"][:5], "direction": s["direction"],
-                "score": float(s["score"]), "threshold": float(s["threshold"]),
-                "go": str(s["model_go"]) in ("True", "true", "1"), "decision": s["decision"],
-                "baseline_go": str(s.get("baseline_go")) in ("True", "true", "1"),
-                "entry": entry, "stop": _num(s.get("stop")), "target": _num(s.get("target")),
-                "status": "open", "status_label": STATUS_LABEL["open"],
-                "price": None, "pnl_pct": None,
-                # initial_stop: at entry; trail_stop: the stop in force now (open) or at the
-                # exit (closed) -- the same `stop` exits.simulate carries through the walk.
-                "initial_stop": _num(s.get("stop")), "trail_stop": _num(s.get("stop")), "exit_stop": None,
-                "best_pct": None, "worst_pct": None, "exit_time": None,
-                "model_version": s.get("model_version"),
-            }
-            if o is not None:
-                stop_at_exit = _exit_stop(o)
-                row.update(status=o["status"], status_label=STATUS_LABEL[o["status"]],
-                           price=_num(o["exit_price"]), pnl_pct=_num(o["pnl_pct"]),
-                           best_pct=_num(o["mfe_pct"]), worst_pct=_num(o["mae_pct"]),
-                           exit_time=str(o["exit_time"])[:5], trail_stop=stop_at_exit,
-                           exit_stop=stop_at_exit)
-            elif w is not None:
-                row.update(price=w["price"], pnl_pct=w["pnl_pct"], trail_stop=w["stop"],
-                           best_pct=w["mfe_pct"], worst_pct=w["mae_pct"])
+            row = {"id": sid, "symbol": s["symbol"], "time": s["time"][:5], "direction": s["direction"],
+                   "score": float(s["score"]), "threshold": float(s["threshold"]),
+                   "go": str(s["model_go"]) in ("True", "true", "1"), "decision": s["decision"],
+                   "baseline_go": str(s.get("baseline_go")) in ("True", "true", "1"),
+                   "entry": float(s["entry_price"]), "stop": _num(s.get("stop")), "target": _num(s.get("target")),
+                   "model_version": s.get("model_version"), "rule": exits.CURRENT_RULE,
+                   **_position(s, self.closed.get(sid), self.live.get(sid))}
+            row["alt"] = {rule: {"rule": rule, **_position(s, a["closed"].get(sid), a["live"].get(sid))}
+                          for rule, a in self.alt.items()}
             out.append(row)
         return out
 
@@ -288,6 +286,51 @@ class ShadowBook:
             "as_of": now.isoformat(timespec="seconds"),
             "rows": self.tracker_rows(),
         })
+
+
+def alt_outcomes_file(outcomes_file, rule):
+    """Where labels under a side-by-side exit rule go: shadow_outcomes_<rule>.csv."""
+    p = Path(outcomes_file)
+    return p.with_name(f"{p.stem}_{rule}{p.suffix}")
+
+
+def _outcome_row(sid, sig, w, now):
+    """The label for one walk. It may only exist once its outcome is complete and
+    observable: raises if the exit candle hasn't closed by `now`."""
+    exit_end = w["exit_candle"] + CANDLE
+    entry_at = _when(now.date(), sig["time"], now.tzinfo)
+    if exit_end > now:
+        raise AssertionError(f"{sid}: label before its exit candle completed ({exit_end} > {now})")
+    if w["exit_candle"] < entry_at:
+        raise AssertionError(f"{sid}: exit candle before entry")
+    return {
+        "signal_id": sid, "date": sig["date"], "status": STATUS[w["reason"]],
+        "exit_reason": w["reason"], "exit_candle": w["exit_candle"].strftime("%H:%M:%S"),
+        "exit_time": exit_end.strftime("%H:%M:%S"), "exit_price": round(w["price"], 2),
+        "pnl_pct": round(w["pnl_pct"], 4), "profit": int(w["pnl_pct"] > 0),
+        "mfe_pct": round(w["mfe_pct"], 4), "mae_pct": round(w["mae_pct"], 4),
+        "labelled_at": now.isoformat(timespec="seconds"), "source": sig.get("source", "live"),
+        "exit_stop": round(w["stop"], 4),            # the stop in force when it closed
+    }
+
+
+def _position(sig, outcome, w):
+    """A signal's state under one exit rule, for the tracker: closed (from its label),
+    open (latest walk), or not yet walked. initial_stop: at entry; trail_stop: the stop
+    in force now (open) or at the exit (closed), the `stop` exits.simulate carries."""
+    pos = {"status": "open", "status_label": STATUS_LABEL["open"], "price": None, "pnl_pct": None,
+           "initial_stop": _num(sig.get("stop")), "trail_stop": _num(sig.get("stop")), "exit_stop": None,
+           "best_pct": None, "worst_pct": None, "exit_time": None}
+    if outcome is not None:
+        stop_at_exit = _exit_stop(outcome)
+        pos.update(status=outcome["status"], status_label=STATUS_LABEL[outcome["status"]],
+                   price=_num(outcome["exit_price"]), pnl_pct=_num(outcome["pnl_pct"]),
+                   best_pct=_num(outcome["mfe_pct"]), worst_pct=_num(outcome["mae_pct"]),
+                   exit_time=str(outcome["exit_time"])[:5], trail_stop=stop_at_exit, exit_stop=stop_at_exit)
+    elif w is not None:
+        pos.update(price=w["price"], pnl_pct=w["pnl_pct"], trail_stop=w["stop"],
+                   best_pct=w["mfe_pct"], worst_pct=w["mae_pct"])
+    return pos
 
 
 def _exit_stop(outcome):

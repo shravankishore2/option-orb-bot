@@ -265,3 +265,34 @@ def test_old_labels_show_the_exit_price_as_the_stop_for_stop_and_trail_exits():
     assert shadow._exit_stop({"exit_reason": "TRAIL", "exit_price": 101.2, "exit_stop": ""}) == 101.2
     assert shadow._exit_stop({"exit_reason": "TIME", "exit_price": 101.2, "exit_stop": None}) is None
     assert shadow._exit_stop({"exit_reason": "TIME", "exit_price": 101.2, "exit_stop": 99.4}) == 99.4
+
+
+# --- a second exit rule, tracked side by side --------------------------------------------
+
+@pytest.mark.parametrize("kind", ["TRAIL", "STOP", "HOLD"])
+def test_every_signal_is_also_labelled_under_the_side_by_side_rule(kind, day, book):
+    rule = exits.SHADOW_RULES[0]
+    candles = days(day)[kind]
+    decisions, _ = run_session(day, candles, book)
+    d = decisions[0]
+    alt_file = shadow.alt_outcomes_file(book.outcomes_file, rule)
+    alt = shadow._read(alt_file)
+    assert len(alt) == 1 and alt["signal_id"].iloc[0] == next(iter(book.closed))   # labelled once
+    pnl, why, _ = exits.simulate_day(candles, dt.time.fromisoformat(d["time"]), d["entry_price"],
+                                     d["ORH"], d["ORL"], d["direction"], rule=rule)
+    assert alt["pnl_pct"].iloc[0] == pytest.approx(pnl, abs=1e-4) and alt["exit_reason"].iloc[0] == why
+    shadow.check_labels_are_complete(alt.assign(time=d["time"]))                     # same no-lookahead guard
+    row = next(iter(json.loads(book.tracker_file.read_text())["rows"]))
+    assert row["rule"] == exits.CURRENT_RULE and row["alt"][rule]["status"] == shadow.STATUS[why]
+    # training reads only the current rule's labels
+    lab = shadow.labelled_rows(book.signals_file, book.outcomes_file)
+    assert lab["pnl_%"].iloc[0] == pytest.approx(next(iter(book.closed.values()))["pnl_pct"])
+
+
+def test_a_restart_reloads_the_side_by_side_labels(day, tmp_path):
+    rule = exits.SHADOW_RULES[0]
+    b1 = shadow.ShadowBook(tmp_path / "s.csv", tmp_path / "o.csv", tmp_path / "t.json")
+    run_session(day, days(day)["TRAIL"], b1)
+    b2 = shadow.ShadowBook(tmp_path / "s.csv", tmp_path / "o.csv", tmp_path / "t.json")
+    b2.load(day)
+    assert b2.alt[rule]["closed"].keys() == b1.alt[rule]["closed"].keys() and b2.open_symbols() == []

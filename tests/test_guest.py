@@ -3,6 +3,7 @@ into anything else; key rotation without a restart; rate limits; noindex."""
 
 import functools
 import json
+import re
 
 import pandas as pd
 import pytest
@@ -54,7 +55,11 @@ def files(tmp_path, monkeypatch):
                 "status_label": "stopped out (trailing stop)" if closed else "open", "price": price,
                 "pnl_pct": pnl, "initial_stop": initial, "trail_stop": stop_now,
                 "exit_stop": stop_now if closed else None, "best_pct": abs(pnl) + 0.1, "worst_pct": -0.2,
-                "exit_time": exit_time, "model_version": "v2"}
+                "exit_time": exit_time, "model_version": "v2",
+                "alt": {"exit_v2_grace10": {"rule": "exit_v2_grace10", "status": status, "status_label": "open",
+                                            "price": price, "pnl_pct": pnl, "initial_stop": initial,
+                                            "trail_stop": stop_now, "exit_stop": None, "best_pct": 0.5,
+                                            "worst_pct": -0.1, "exit_time": exit_time}}}
     snap = {"version": f"{day}T14:20:20+05:30/1", "day": day, "as_of": f"{day}T14:20:20+05:30",
             "rows": [row("DMART", "SELL", True, 3626.35, 3587.15, 1.08, 3686.45, 3648.75),
                      row("KALYANKJIL", "BUY", False, 550.65, 562.05, 2.07, 542.65, 551.05),
@@ -97,7 +102,8 @@ def client(files):
     return c
 
 
-GUEST_PAGES = ["/guest", "/guest?fragment=1", "/guest?time=10:30", "/guest/tracker", "/guest/api/tracker",
+GUEST_PAGES = ["/guest", "/guest?fragment=1", "/guest?time=10:30", "/guest?rule=exit_v2_grace10",
+               "/guest?rule=exit_v2_grace10&fragment=1", "/guest/tracker", "/guest/api/tracker",
                "/guest/scorecard", "/guest/scorecard?filter=baseline", "/guest/performance",
                "/guest/performance?period=development"]
 PRICE_KEYS = {"entry", "price", "stop", "trail_stop", "exit_stop", "initial_stop", "target", "entry_price",
@@ -120,6 +126,8 @@ def test_no_raw_price_anywhere_in_the_guest_view(client):
         r = client.get(path + ("&" if "?" in path else "?") + "k=" + KEY)
         assert r.status_code == 200, path
         body = r.get_data(as_text=True)
+        # chart geometry (SVG path/point coordinates) isn't data; chart labels are still scanned
+        body = re.sub(r'\s(?:d|points|viewBox|transform)="[^"]*"', "", body)
         assert "₹" not in body, f"rupee sign in {path}"
         for p in PRICES:
             for t in tokens(p):
@@ -196,3 +204,10 @@ def test_noindex_everywhere_the_guest_goes(client):
     assert '<meta name="robots" content="noindex, nofollow">' in r.get_data(as_text=True)
     robots = client.get("/robots.txt")
     assert robots.status_code == 200 and "Disallow: /" in robots.get_data(as_text=True)
+
+
+def test_guest_view_has_the_ticker_chips_and_the_exit_rule_toggle(client):
+    html = client.get(f"/guest?k={KEY}").get_data(as_text=True)
+    assert 'data-filter="ticker" data-value="KALYANKJIL"' in html and "10-min trail grace" in html
+    links = re.findall(r'href="(/guest\?[^"]*rule=exit_v2_grace10[^"]*)"', html)
+    assert links and all(f"k={KEY}" in u for u in links)                          # the toggle keeps the key
