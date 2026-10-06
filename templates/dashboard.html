@@ -58,7 +58,7 @@
     {% with part = "strip" %}{% include "live_fragment.html" %}{% endwith %}
     <p class="selective-note">{{ selective_note }}</p>
 
-    <section class="filter-strip" aria-label="Filters">
+    <section class="filter-strip compact" aria-label="Time filter">
         <div class="filter-label" id="time-label">UP TO TIME</div>
         <div class="time-buttons" role="group" aria-labelledby="time-label">
             {% for t in time_filters %}

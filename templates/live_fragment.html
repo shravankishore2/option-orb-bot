@@ -13,7 +13,7 @@
         <div class="stat-card"><span>GO (SENT)</span><strong class="green">{{ sm.go }}</strong></div>
         <div class="stat-card"><span>SKIP (TRACKED, NOT TAKEN)</span><strong>{{ sm.skip }}</strong></div>
         <div class="stat-card"><span>SKIPS IN PROFIT NOW</span><strong>{% if sm.skip_priced %}{{ sm.skip_in_profit }}/{{ sm.skip_priced }}{% else %}—{% endif %}</strong>
-            <small>latest candle, or exit if closed</small></div>
+            <small>now, or at exit</small></div>
         <div class="stat-card"><span>SKIP AVG LIVE P&amp;L</span><strong>{% if sm.skip_avg_pnl is not none %}<em class="{{ 'pos' if sm.skip_avg_pnl >= 0 else 'neg' }}">{{ "%+.2f"|format(sm.skip_avg_pnl) }}%</em>{% else %}—{% endif %}</strong>
             <small>paper, gross</small></div>
         <div class="stat-card"><span>GO THRESHOLD</span><strong>{{ model.threshold }}</strong>{% if sm.stale %}<small>{{ sm.stale }} stale (not sent)</small>{% endif %}</div>
@@ -65,8 +65,8 @@
             </td>
             <td data-label="Decision">
                 {% if s.decision == "GO" %}<span class="dec dec-go">GO</span>
-                {% elif s.decision == "STALE" %}<span class="dec dec-stale" title="first seen more than 10 minutes late; not sent">STALE <small>not sent</small></span>
-                {% else %}<span class="dec dec-skip" title="paper (shadow) position: the model did not take it">SKIP <small>tracked, not taken</small></span>{% endif %}
+                {% elif s.decision == "STALE" %}<span class="dec dec-stale" title="first seen more than 10 minutes late; not sent"><b>STALE</b> <small>not sent</small></span>
+                {% else %}<span class="dec dec-skip" title="paper (shadow) position: the model did not take it"><b>SKIP</b> <small>tracked, not taken</small></span>{% endif %}
             </td>
             <td data-label="Score">
                 {% if s.score_raw is not none %}
