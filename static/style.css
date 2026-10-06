@@ -893,7 +893,7 @@ em.few, em.pos, em.neg { font-style: normal; }
 #live-strip .stat-card { padding-top: 10px; padding-bottom: 10px; }
 #live-strip .stat-card strong { font-size: 22px; }
 .filter-strip.compact { margin-top: 8px; padding-top: 8px; padding-bottom: 8px; margin-bottom: 4px; }
-.filter-strip.compact .time-btn { padding-top: 5px; padding-bottom: 5px; }
+.filter-strip.compact .time-btn { padding: 5px 9px; min-width: 0; }
 @media (min-width: 1100px) and (max-width: 1300px) {
     #live-strip .stats-row { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
@@ -1022,7 +1022,7 @@ th[aria-sort="descending"] .sort i::after { content: "↓"; opacity: 1; }
     .sig-table tbody.first-skip { margin-top: 18px; }
     .sig-table tbody.first-skip .sig-main td { border-top: 0; }
     .sig-table tbody.is-go .sig-main td:first-child { box-shadow: none; }
-    .sig-main { display: grid; grid-template-columns: 1fr 1fr; position: relative; }
+    .sig-table tr.sig-main { display: grid; grid-template-columns: 1fr 1fr; position: relative; }
     .sig-main td { border: 0; padding: 8px 12px; }
     .sig-main td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted-2);
         text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;
