@@ -256,6 +256,25 @@ def ensure_snapshot(symbols, now):
         print(f"⚠️ snapshot failed: {e}")
 
 
+def resnapshot(symbols, now):
+    """Pre-open: replace the latest session's snapshot with the quote feed's final OHLC.
+    The 15:40 snapshot's close can still be the previous session's for many stocks."""
+    if dt.time(9, 0) <= now.time() <= dt.time(15, 40) and now.weekday() < 5:     # pre-open to after the close
+        print("⏸️ market hours: the quote close isn't the finished session's; run before the open")
+        return 1
+    try:
+        session = latest_completed_session(now)
+        if session is None:
+            print("⚠️ no completed session found")
+            return 1
+        n = take_session_snapshot(symbols, session)
+        print(f"📸 Re-stored official OHLC for {session} ({n} symbols) → {SNAPSHOT_FILE.name}")
+        return 0
+    except dhan.DhanError as e:
+        print(f"⚠️ re-snapshot failed: {e}")
+        return 2
+
+
 def next_boundary(now):
     minute = (now.minute // C.CANDLE_MINUTES + 1) * C.CANDLE_MINUTES
     base = now.replace(minute=0, second=0, microsecond=0)
@@ -270,11 +289,15 @@ def main():
                     help="run today's session, store the closing snapshot after 15:40, then exit")
     ap.add_argument("--snapshot", action="store_true",
                     help="store the latest session's official OHLC, then exit (run after 15:40)")
+    ap.add_argument("--resnapshot", action="store_true",
+                    help="re-take the latest session's OHLC even if stored (pre-open, when the close is final)")
     a = ap.parse_args()
 
     if a.snapshot:
         ensure_snapshot(get_symbols(), now_ist())
         return 0
+    if a.resnapshot:
+        return resnapshot(get_symbols(), now_ist())
 
     print("🚀 ORBITAL live bot" + ("  [DRY RUN — nothing is sent]" if a.dry_run else ""))
 

@@ -1,0 +1,21 @@
+# /etc/systemd/system/orbital-snapshot.service — re-take the latest session's official OHLC
+# before the open. Dhan's quote close isn't final at the 15:40 snapshot (on 2026-09-30, 10-01 and
+# 10-06 about half the closes were still the previous session's); by morning it is. The session
+# run uses this snapshot for the previous close whenever Dhan hasn't published the daily bar.
+[Unit]
+Description=ORBITAL pre-open snapshot of the previous session's official OHLC
+After=network-online.target newsalert-token.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/orbital
+Environment=PYTHONUNBUFFERED=1 TZ=Asia/Kolkata
+ExecCondition=/bin/sh -c 'cd /home/ubuntu/newsalert && exec .venv/bin/python -m newsalert is-trading-window --until 15:35'
+ExecStart=/home/ubuntu/orbital/.venv/bin/python -u main.py --resnapshot
+MemoryMax=300M
+Nice=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+SyslogIdentifier=orbital-snapshot

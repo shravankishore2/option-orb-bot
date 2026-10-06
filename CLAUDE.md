@@ -62,6 +62,7 @@ Credentials: `config.ini` (git-ignored; template `config.example.ini`). Telegram
 
 - Intraday `toDate` omits the **most recent** session unless it is past it. `dhan_client.get_intraday` requests one day beyond and trims; any raw `_post("/charts/intraday", …)` call must do the same.
 - Ranges with no candles (e.g. an unpublished daily bar) come back as HTTP 400 `DH-907`, not an empty list; `get_daily`/`get_intraday` convert that to an empty frame.
+- Dhan's quote **close is not final at 15:40**: on 2026-09-30, 10-01 and 10-06 about half the stored closes were still the previous session's (highs/lows were right). `main.py --resnapshot` (timer `orbital-snapshot`, 08:50 IST) re-takes the latest session before the open, when it is final; `take_session_snapshot` warns when >10% of closes equal the previous session's.
 - The daily bar is published late (on 23 Sep, the 22 Sep bar was still missing at 15:10). Live prev-close falls back to `data/session_ohlc.csv` (official OHLC snapshot, `main.py --snapshot`), then to candle-derived values with a warning.
 - Rate limit 5 req/s **per account** (limiter 4 alone; the VM config sets 3 plus `quiet_seconds = 57-4` because QuantRadar shares the account); intraday span ≤ 90 days per request.
 - Data can include pre-open (09:07), Muhurat-session and stray index candles; `regular_session()` keeps 09:15–15:30 only.

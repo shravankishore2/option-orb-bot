@@ -242,3 +242,35 @@ def test_registry_ships_v2_1_and_the_054_threshold_variant():
     assert set(v21.features) < set(registry.baseline().features)
     assert v21.meta["trained_through"] == registry.baseline().trained_through
     assert vs["v2@0.54"]["model"] is None and vs["v2@0.54"]["threshold"] == 0.54
+
+
+# --- the previous-session snapshot: Dhan's 15:40 quote close isn't final ---------------------
+
+def test_stale_close_share():
+    assert L.stale_close_share({"A": 10.0, "B": 20.0, "C": 30.0}, {"A": 10.0, "B": 19.0}) == 0.5
+    assert L.stale_close_share({"A": 10.0}, {}) == 0.0
+
+
+def test_a_snapshot_with_stale_closes_warns_and_a_later_one_replaces_it(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "s.csv"
+    pd.DataFrame([{"session_date": "2026-10-05", "symbol": s, "open": 1, "high": 2, "low": 0.5, "close": c}
+                  for s, c in (("A", 10.0), ("B", 20.0), ("C", 30.0))]).to_csv(path, index=False)
+    quotes = {"A": (1, 2, 0.5, 10.0), "B": (1, 2, 0.5, 20.0), "C": (1, 2, 0.5, 31.0)}     # 2 of 3 still yesterday's
+    monkeypatch.setattr(L.dhan, "get_session_ohlc", lambda syms: quotes)
+    L.take_session_snapshot(["A", "B", "C"], dt.date(2026, 10, 6), path)
+    assert "67% of closes equal the previous session's" in capsys.readouterr().out
+    quotes.update(A=(1, 2, 0.5, 10.5), B=(1, 2, 0.5, 21.0))                             # next morning: final
+    L.take_session_snapshot(["A", "B", "C"], dt.date(2026, 10, 6), path)
+    assert "closes equal" not in capsys.readouterr().out
+    snap = L.load_snapshot(path)
+    assert snap[(dt.date(2026, 10, 6), "A")][3] == 10.5 and len(pd.read_csv(path)) == 6      # replaced, not duplicated
+
+
+def test_resnapshot_refuses_during_market_hours(monkeypatch, capsys):
+    import main as M
+    monkeypatch.setattr(M, "take_session_snapshot", lambda *a: (_ for _ in ()).throw(AssertionError("must not run")))
+    assert M.resnapshot(["A"], dt.datetime(2026, 10, 7, 11, 0, tzinfo=IST)) == 1
+    monkeypatch.setattr(M, "latest_completed_session", lambda now: dt.date(2026, 10, 6))
+    calls = []
+    monkeypatch.setattr(M, "take_session_snapshot", lambda syms, day: calls.append(day) or 3)
+    assert M.resnapshot(["A"], dt.datetime(2026, 10, 7, 8, 50, tzinfo=IST)) == 0 and calls == [dt.date(2026, 10, 6)]

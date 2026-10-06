@@ -53,8 +53,24 @@ DAILY_DAYS = 40         # daily look-back for ATR(14) and the previous session
 SNAPSHOT_FILE = BASE_DIR / "data" / "session_ohlc.csv"
 
 
+STALE_CLOSE_SHARE = 0.10   # more closes than this equal to the previous session's = not final yet
+
+
+def stale_close_share(rows, previous):
+    """Share of symbols whose stored close equals the previous session's close. Dhan's
+    quote close is not final right after the session: on 2026-09-30, 10-01 and 10-06
+    about half of the 15:40 closes were still the previous session's, while every high
+    and low was right; by the next morning they are final."""
+    common = [s for s in rows if s in previous]
+    if not common:
+        return 0.0
+    return sum(abs(rows[s] - previous[s]) < 0.011 for s in common) / len(common)
+
+
 def take_session_snapshot(symbols, session_date, path=SNAPSHOT_FILE):
-    """Store the quote feed's OHLC (official close) for `session_date`."""
+    """Store the quote feed's OHLC (official close) for `session_date`, replacing any
+    earlier snapshot of that session. Taken at 15:40 by the session run and again before
+    the next open (main.py --resnapshot, 08:50), when the close is final."""
     q = dhan.get_session_ohlc(symbols)
     rows = pd.DataFrame([{"session_date": session_date.isoformat(), "symbol": s,
                           "open": o, "high": h, "low": l, "close": c}
@@ -63,6 +79,17 @@ def take_session_snapshot(symbols, session_date, path=SNAPSHOT_FILE):
     if not old.empty:
         keep_from = (session_date - dt.timedelta(days=10)).isoformat()
         old = old[(old["session_date"] != session_date.isoformat()) & (old["session_date"] >= keep_from)]
+    try:                                          # a check only: never stops the snapshot
+        if not old.empty and not rows.empty:
+            prior = old[old["session_date"] < session_date.isoformat()]
+            if not prior.empty:
+                last = prior[prior["session_date"] == prior["session_date"].max()]
+                share = stale_close_share(dict(zip(rows["symbol"], rows["close"])), dict(zip(last["symbol"], last["close"])))
+                if share > STALE_CLOSE_SHARE:
+                    print(f"⚠️ snapshot {session_date}: {share:.0%} of closes equal the previous session's — "
+                          f"the quote close isn't final yet; the pre-open re-snapshot replaces it")
+    except Exception as e:                        # noqa: BLE001
+        print(f"⚠️ stale-close check skipped: {type(e).__name__}: {e}")
     pd.concat([old, rows], ignore_index=True).to_csv(path, index=False)
     return len(rows)
 

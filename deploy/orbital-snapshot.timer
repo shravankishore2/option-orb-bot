@@ -1,0 +1,11 @@
+# /etc/systemd/system/orbital-snapshot.timer — 08:50 IST on weekdays: after the 08:30 token
+# refresh, before the 09:00 pre-open and the bot's 09:15 start. Holidays skipped by the service.
+[Unit]
+Description=ORBITAL pre-open snapshot at 08:50 IST on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:50:00 Asia/Kolkata
+Unit=orbital-snapshot.service
+
+[Install]
+WantedBy=timers.target
