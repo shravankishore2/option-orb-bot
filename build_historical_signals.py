@@ -17,6 +17,7 @@ live_engine.py calls replay_day() itself — so backtest and live cannot differ.
 Rule sets:
   orbital    the live rules: ORB break + 1.8% from prev close + R1/S1 pivot
   plain_orb  baseline: ORB break only, no other filter
+  orbital_nomove  research (v3 candidate): orbital without the 1.8% condition
 
 Usage:
     python build_historical_signals.py --start 2021-01-01 --end 2026-09-22 \
@@ -89,6 +90,8 @@ def replay_day(symbol, day, day_candles, prev_high, prev_low, prev_close, rules=
 
         if rules == "orbital":
             direction = evaluate(candle, orh, orl, prev_close, r1, s1)
+        elif rules == "orbital_nomove":           # research: no ±1.8%-from-previous-close condition
+            direction = evaluate(candle, orh, orl, prev_close, r1, s1, prev_move=None)
         else:
             direction = plain_orb(candle, orh, orl)
 
@@ -187,7 +190,7 @@ def main():
     ap.add_argument("--start", default=C.HISTORY_START.isoformat())
     ap.add_argument("--end", default=dt.date.today().isoformat())
     ap.add_argument("--universe", choices=["current", "pit"], default="pit")
-    ap.add_argument("--rules", choices=["orbital", "plain_orb"], default="orbital")
+    ap.add_argument("--rules", choices=["orbital", "plain_orb", "orbital_nomove"], default="orbital")
     ap.add_argument("--out", default="data/research/signals_orbital.csv",
                     help="signals file; results go next to it with _results suffix")
     ap.add_argument("--symbols", default=None, help="comma-separated subset")

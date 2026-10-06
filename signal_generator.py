@@ -8,19 +8,21 @@
 import strategy_config as C
 
 
-def evaluate(close, orh, orl, prev_close, r1, s1):
-    """Return 'BUY', 'SELL' or None for one observed price."""
+def evaluate(close, orh, orl, prev_close, r1, s1, prev_move=C.PREV_CLOSE_MOVE):
+    """Return 'BUY', 'SELL' or None for one observed price.
+
+    prev_move: the minimum move from the previous close (the live rule's 1.8%).
+    None drops that condition (research variant `orbital_nomove`, v3 candidate);
+    the default is the pre-registered rule and is what the live bot uses."""
     if not prev_close or prev_close <= 0 or r1 is None or s1 is None:
         return None
+    up = prev_move is None or close >= prev_close * (1 + prev_move)
+    down = prev_move is None or close <= prev_close * (1 - prev_move)
 
-    if (close >= orh * (1 + C.BREAKOUT_BUFFER)
-            and close >= prev_close * (1 + C.PREV_CLOSE_MOVE)
-            and close >= r1):
+    if close >= orh * (1 + C.BREAKOUT_BUFFER) and up and close >= r1:
         return "BUY"
 
-    if (close <= orl * (1 - C.BREAKOUT_BUFFER)
-            and close <= prev_close * (1 - C.PREV_CLOSE_MOVE)
-            and close <= s1):
+    if close <= orl * (1 - C.BREAKOUT_BUFFER) and down and close <= s1:
         return "SELL"
 
     return None

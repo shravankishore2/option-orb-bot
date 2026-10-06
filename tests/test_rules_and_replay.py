@@ -101,3 +101,29 @@ def test_prev_session_works_when_today_is_not_in_the_table():
 def test_prev_session_none_without_history():
     daily = make_daily([dt.date(2026, 9, 1)])
     assert B.prev_session(daily, dt.date(2026, 9, 1)) is None
+
+
+# --- research variant: no "moved 1.8% from the previous close" condition (v3 candidate) -----
+
+def test_the_default_rule_still_requires_the_previous_close_move():
+    from signal_generator import evaluate
+    # breaks ORH and R1, but only +1.0% from the previous close
+    assert evaluate(101.0, 100.0, 99.0, 100.0, 100.5, 98.0) is None
+    assert evaluate(101.0, 100.0, 99.0, 100.0, 100.5, 98.0, prev_move=None) == "BUY"
+    assert evaluate(102.0, 100.0, 99.0, 100.0, 100.5, 98.0) == "BUY"                 # +2%: both agree
+    assert evaluate(98.9, 100.0, 99.0, 100.0, 100.5, 99.5, prev_move=None) == "SELL"
+    assert evaluate(98.9, 100.0, 99.0, 100.0, 100.5, 99.5) is None
+
+
+def test_nomove_signals_are_a_superset_of_the_live_rule(day):
+    import numpy as np
+    import build_historical_signals as B
+    from conftest import make_day
+    rng = np.random.default_rng(3)
+    for _ in range(200):
+        closes = list(100 + np.cumsum(rng.normal(0, 0.5, 75)))
+        g = make_day(day, closes)
+        live = {(s["direction"], s["time"]) for s in B.replay_day("X", day, g, 101.0, 98.5, 99.6)}
+        new = {s["direction"]: s["time"] for s in B.replay_day("X", day, g, 101.0, 98.5, 99.6, rules="orbital_nomove")}
+        for d, t in live:                       # every live signal fires, at the same time or earlier
+            assert d in new and new[d] <= t
