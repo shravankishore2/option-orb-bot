@@ -1,13 +1,25 @@
 # ORBITAL — ML-filtered Opening Range Breakout for the Nifty 200
 
-ORBITAL watches the Nifty 200 for **opening-range breakouts**, scores each one
-with an **XGBoost** model, and sends only the top-rated few to Telegram. It is
-**signals only**: it alerts, it never places orders (see below). The same
-code runs live and in the backtest, and the backtest is built to be hard to
-fool: point-in-time universe, walk-forward retraining, a pre-registered clean
-test, baselines, and confidence intervals.
+![ORBITAL live scanner: every signal of the day in one table, GO first, skipped signals tracked on paper](docs/screenshots/live-scanner.png)
 
-> Research project (B.Tech final year). Not financial advice.
+**Live demo: [https://orbital.68-233-96-25.sslip.io/guest](https://orbital.68-233-96-25.sslip.io/guest?k=PlkU9ablve5WLa3dEoRPPRT7d8QWmhAq)** — a read-only view of the live
+dashboard: signals only, no orders, prices shown as % moves (see
+[Guest view](#guest-view-and-dhans-terms)).
+
+> B.Tech project. Research, not financial advice.
+
+## What ORBITAL is
+
+ORBITAL watches the Nifty 200 for **opening-range breakouts**, scores every
+breakout with an **XGBoost** model, and sends only the top ~2% to Telegram.
+It is **signals only**: it never places an order, and that is enforced in code
+([below](#signals-only)). Every signal the model skips is still tracked on
+paper to its outcome, so the filter is judged on what it turned down as well as
+what it took.
+
+The same code runs live and in the backtest, and the backtest is built to be
+hard to fool: a point-in-time universe, monthly walk-forward retraining, a
+pre-registered clean test, baselines and confidence intervals.
 
 **Results:** [`docs/RESULTS.md`](docs/RESULTS.md) ·
 **How the model decides:** [`docs/MODEL.md`](docs/MODEL.md) ·
@@ -15,25 +27,58 @@ test, baselines, and confidence intervals.
 **Live bot edge cases:** [`docs/LIVE_EDGE_CASES.md`](docs/LIVE_EDGE_CASES.md) ·
 **Study guide:** [`PROJECT_GUIDE.md`](PROJECT_GUIDE.md)
 
-## Results in one paragraph
+## Architecture
 
-On a **pre-registered clean test** (2022-01 → 2023-08, never examined during
-design), the original model (**v1**) failed: −0.027% per trade, no better than
-random picks from the same signals (p = 0.83). It predicted its training label
-well, but that label was anti-aligned with profit. The **entry rules themselves**
-hold a small real edge out of sample (+0.054% per trade, 95% CI +0.027% to
-+0.083%, vs +0.030% for a plain breakout and ≈0 for random entries) — below
-realistic costs. **v2**, which predicts profit directly, is strong in development
-(+0.186%, p = 0.004) but was chosen after v1 failed; on 2022-23 its edge comes
-from one crash month, and 34–46% of its trades enter after 15:00. It is live
-under its own pre-registered forward test. The live bot reproduces the backtest
-exactly: **703/703 identical decisions** over 11 real sessions.
-Full tables: [`docs/RESULTS.md`](docs/RESULTS.md).
+```
+ DhanHQ market data (5-min candles, daily bars, quotes; read-only endpoints only)
+      │
+ dhan_client.py ── rate limit, retries, allowlist (/charts, /marketfeed)
+      │
+ history_cache.py ── on-disk candle cache, fetches only what's missing
+      │
+      ├──── RESEARCH ─────────────────────────────┐   ┌──── LIVE (every 5 min) ──────────────┐
+      │  survivorship.py   point-in-time universe │   │  live_engine.py                      │
+      │  build_historical_signals.replay_day ◄────┼───┼── same rules                         │
+      │  features.py (28 inputs) ◄────────────────┼───┼── same features                      │
+      │  walk_forward.py   monthly retrain        │   │  XGBoost score ≥ threshold → GO      │
+      │  exits.simulate    every P&L number ◄─────┼───┼── shadow.py walks every signal       │
+      │  report.py → docs/RESULTS.md              │   │  notifier.py → Telegram (GO only)    │
+      └───────────────────────────────────────────┘   └──────────────┬───────────────────────┘
+                                                                     │
+                       webapp.py dashboard ◄── tracker.json, shadow log, scorecard
+                       challenger.py (monthly) · drift.py (weekly) ◄── labelled shadow signals
+```
 
-## The research story
+One implementation of each step is shared by live and backtest: the entry
+rules, the 28 model inputs and the exit rule. A test runs the live engine
+cycle by cycle through a day and asserts it equals the batch replay, and over
+11 real sessions the live code reproduced the backtest's 703/703 decisions.
 
-The honest version, including what failed. Detail in
-[`PROJECT_GUIDE.md`](PROJECT_GUIDE.md) §5–7.
+```
+ 09:20–09:35   opening range forms (3 five-minute candles, all required)
+      │
+ every 5 min   on each COMPLETED candle, the rules check:
+      │          close beyond the range  +  ±1.8% from yesterday's close  +  Fibonacci R1/S1
+      ▼
+   signal ──►  28 inputs (range geometry, volume, VWAP, volatility, sector, NIFTY, breadth)
+      │
+      ▼
+   XGBoost ──► P(trade makes money under the exit rule)        (model v2)
+      │
+   score ≥ threshold ?  ── no ──►  SKIP: tracked on paper, not sent
+      │ yes
+      ▼
+   Telegram:  entry, stop (1× range), trail (1× range), flat by 15:15
+```
+
+The threshold is not tuned by hand: it is the 98th percentile of scores on
+recent out-of-sample data, so roughly the top 2% of signals are traded.
+
+## The research story, with honest numbers
+
+All P&L is per trade, **gross of costs** (realistic round-trip costs are
+0.05–0.10%), under the same exit rule. Detail in
+[`docs/RESULTS.md`](docs/RESULTS.md) and [`PROJECT_GUIDE.md`](PROJECT_GUIDE.md) §5–7.
 
 1. **A broken label.** The first model predicted "hit the midpoint target"
    with AUC 0.81, yet that label had a 0.03 correlation with making money — a
@@ -45,21 +90,38 @@ The honest version, including what failed. Detail in
    ATR that included the day's own range. Fixing the first two alone cut the
    headline from +0.303% to +0.109% per trade. Each fix has a test that tampers
    with future candles and checks nothing changes.
-3. **Walk-forward, point in time.** A fresh model every month trained only on
-   the past, an absolute threshold from calibration data, and a Nifty 200
-   rebuilt at each rebalance (survivorship).
-4. **Pre-registered v1 failed.** The config was frozen and hashed before the
-   2022–23 data was downloaded. On that clean test v1 made **−0.027% per
-   trade** (95% CI −0.082% to +0.032%; random picks did as well 83% of the
-   time). It ranked its label well (AUC 0.64–0.71), but higher scores meant
-   *lower* P&L — the second proxy-label failure.
-5. **v2 and its caveats.** v2 predicts "made money under the exit rule". It
-   was chosen *after* v1 failed, so its 2022–23 numbers are post-hoc; a single
-   crash month carries much of its edge, and many trades enter after 15:00. It
-   has its own pre-registered forward test from 2026-09-23.
-6. **What holds up.** The entry rules beat a plain breakout and random entry
-   in every period, but the edge (+0.054% per trade gross) is below realistic
-   costs.
+3. **The pre-registered model (v1) failed.** The config was frozen and hashed
+   before the 2022–23 data was downloaded. On that clean test v1 made
+   **−0.027% per trade** over 676 trades (95% CI −0.082% to +0.032%; random
+   picks from the same signals did as well 83% of the time). It ranked its
+   label well, but higher scores meant *lower* P&L — a second proxy-label
+   failure.
+4. **v2 predicts profit directly — and was chosen after v1 failed.** In
+   monthly walk-forward over 2023-09 → 2026-09 (the period it was designed on)
+   it made +0.186% per trade on 1,202 trades, but its best month (2024-06) is
+   48% of that P&L. **Without that month: +0.102% per trade on 1,142 trades**,
+   against +0.062% for random picks from the same signals (p = 0.025) — an
+   edge about the size of realistic costs. On 2022–23 (post-hoc for v2) its
+   edge comes from one crash month (61% of its P&L; without it, +0.052%, the
+   same as random picks).
+5. **What holds up.** The entry rules alone beat a plain breakout and random
+   entries in every period (clean test +0.054% per trade, 95% CI +0.027% to
+   +0.083%), but that edge is below realistic costs.
+6. **The forward test is running.** v2 has its own pre-registered forward test
+   from 2026-09-23; the dashboard's scorecard tracks it, including every
+   skipped signal. A dozen GO trades so far is far too few to read.
+
+## Live dashboard
+
+The scorecard compares what the model took (GO) with what it skipped, daily
+and cumulatively, and reports the latest session's skips by score band:
+
+![Scorecard: GO vs skipped signals, daily and cumulative, and the latest session's skipped signals](docs/screenshots/scorecard.png)
+
+Each row of the live scanner opens to show the opening range, the stop and
+the timing behind the signal:
+
+![An expanded row: opening-range width, breakout, stop distance and timing as % moves](docs/screenshots/expanded-row.png)
 
 ## Signals only
 
@@ -74,7 +136,29 @@ not config:
 - `tests/test_signals_only.py` fails if any trading endpoint is reachable or
   appears anywhere in the code; CI runs it on every push.
 
----
+## Guest view and Dhan's terms
+
+The live demo link opens `/guest?k=<key>`: the live scanner, tracker, scorecard
+and performance tabs, read-only. It shows no prices at all — every price is
+replaced by a % move (entry → now, stop distance, best and worst, range width),
+in the pages and in their JSON; a test fails if a raw price or a rupee sign
+appears anywhere in the guest view. Guests get no session and can't reach any
+other page; requests are rate-limited, and every guest response is `noindex`
+(`robots.txt` disallows the whole site). The key lives only on the server and
+is rotated with `python guest.py rotate` (no restart needed).
+
+**Is showing this allowed? Unconfirmed.** Dhan's
+[Terms of Usage](https://dhan.co/terms/) (checked 2026-10-06) restrict
+"Publishing any Dhan Platform's material in any other media" and "data
+mining, data harvesting, data extracting or any other similar activity in
+relation to the Dhan Platform", where the Dhan Platform is their website and
+app. They say nothing explicit about data obtained through the DhanHQ APIs,
+about derived figures such as % moves, or about personal versus commercial
+use, and the [DhanHQ API docs](https://dhanhq.co/docs/v2/) link no separate
+data licence. NSE's own data policy also governs redistribution of its market
+data. The guest view therefore shows only derived % moves and the model's own
+signals, never prices, and it would be taken down if Dhan or NSE objected;
+written confirmation from Dhan has not been obtained.
 
 ## Shadow tracking, scorecard and model updates
 
@@ -85,9 +169,10 @@ not config:
   the bot already fetches, and **labelled once**, only after its exit candle
   has closed. The label records its exit reason and time, P&L, and best and
   worst move.
-- **Tracker** (dashboard): today's signals in GO and NO-GO tabs. It updates
-  after every price cycle, and the page receives the updates live
-  (Server-Sent Events, like QuantRadar).
+- **Live scanner and tracker** (dashboard): today's signals in one table, GO
+  first, with entry → now, the stop in force (initial, current, at exit), the
+  best and worst move, and the status. They update after every price cycle
+  (Server-Sent Events on the tracker, a 30 s refresh on the scanner).
 - **Scorecard** (dashboard): GO vs NO-GO hit rate and average P&L, missed
   winners and avoided losers, both daily and cumulative. Fewer than 30 signals
   is flagged as too few to read.
@@ -110,28 +195,6 @@ not config:
 - Sessions before tracking began were replayed through the live engine
   (`shadow_backfill.py`) and are marked `replay`.
 
-## How it works
-
-```
- 09:20–09:35   opening range forms (3 five-minute candles, all required)
-      │
- every 5 min   on each COMPLETED candle, the rules check:
-      │          close beyond the range  +  ±1.8% from yesterday's close  +  Fibonacci R1/S1
-      ▼
-   signal ──►  28 inputs (range geometry, volume, VWAP, volatility, sector, NIFTY, breadth)
-      │
-      ▼
-   XGBoost ──► P(trade makes money under the exit rule)        (model v2)
-      │
-   score ≥ threshold ?  ── no ──►  logged as SKIP
-      │ yes
-      ▼
-   Telegram:  entry, stop (1× range), trail (1× range), flat by 15:15
-```
-
-The threshold is not tuned by hand: it is the 98th percentile of scores on
-recent out-of-sample data, so roughly the top 2% of signals are traded.
-
 ## Setup
 
 ```bash
@@ -153,7 +216,7 @@ Dhan credentials:
 ./start.sh                    # live bot + dashboard (http://127.0.0.1:5050); Ctrl+C stops both
 ./start.sh --dry-run          # same, but nothing is sent to Telegram
 python main.py --session      # one trading session, closing snapshot at 15:40, then exit
-python -m pytest              # ~90 tests, ~7 s
+python -m pytest              # ~160 tests
 python run_pipeline.py        # rebuild every research result (~2 h first time, mostly downloads)
 ```
 
@@ -170,7 +233,7 @@ On a small VM, alongside another service that shares the Dhan account
 |---|---|
 | `orbital.timer` → `orbital.service` | 09:15 IST on NSE trading days (holiday calendar via `ExecCondition`); `main.py --session`; restarts on failure; memory-capped |
 | `orbital-web.service` | Dashboard under waitress on 127.0.0.1:5050, always on |
-| `Caddyfile.orbital` | HTTPS in front of the dashboard; the dashboard has its own password page (`auth.py`: signed HttpOnly session cookie, lockout after 5 wrong tries) |
+| `Caddyfile.orbital` | HTTPS in front of the dashboard; the dashboard has its own password page (`auth.py`: signed HttpOnly session cookie, lockout after 5 wrong tries) and the read-only guest view (`guest.py`) |
 
 Dhan's 5 requests/s limit is per account, so on a shared account ORBITAL runs
 at 3/s (`rate_per_sec`) and stays silent around each minute boundary
@@ -198,7 +261,7 @@ at 3/s (`rate_per_sec`) and stays silent around each minute boundary
 | **Live** | `live_engine.py` | Decision engine (completed candles → rules → features → model) |
 | | `main.py` | The bot: 5-minute loop, Telegram, logs (`--session` for the systemd timer) |
 | | `notifier.py` | Telegram messages and the sent log |
-| | `webapp.py`, `auth.py`, `charts.py`, `templates/`, `static/` | Dashboard and its login |
+| | `webapp.py`, `auth.py`, `guest.py`, `charts.py`, `templates/`, `static/` | Dashboard, its login and the read-only guest view |
 | **v1 research** | `train_classifier.py`, `experiments.py`, `sweep_exits.py` | The September 2026 exploration (label choice, exit sweep) on `data/research/v1/` |
 | **Tests** | `tests/` | Rules, no-lookahead, live/backtest parity, exits, stats, plumbing, signals-only guard, real-data regression |
 | **Deploy** | `deploy/`, `config.example.ini` | systemd units, Caddy site, logrotate; config template |

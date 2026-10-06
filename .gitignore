@@ -34,6 +34,7 @@ __pycache__/
 .idea/
 *.png
 !static/figures/*.png
+!docs/screenshots/*.png
 *.pdf
 
 # --- private notes (the repo is public) --------------------------------------

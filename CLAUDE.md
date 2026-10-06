@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-ORBITAL: an intraday Opening Range Breakout system for the Nifty 200 (B.Tech final-year project). Live bot + research pipeline over DhanHQ market data, with an XGBoost filter. See `README.md` (overview, results summary), `PROJECT_GUIDE.md` (full history and rationale), `docs/RESULTS.md`, `docs/PREREGISTRATION.md`, `docs/LIVE_EDGE_CASES.md`.
+ORBITAL: an intraday Opening Range Breakout system for the Nifty 200 (B.Tech project). Live bot + research pipeline over DhanHQ market data, with an XGBoost filter. See `README.md` (overview, results summary), `PROJECT_GUIDE.md` (full history and rationale), `docs/RESULTS.md`, `docs/PREREGISTRATION.md`, `docs/LIVE_EDGE_CASES.md`.
 
 ## Commands
 
