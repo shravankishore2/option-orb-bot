@@ -189,4 +189,7 @@ recorded as negative and nothing is tracked.
 
 ## Deviations
 
-(none yet)
+- None in method. One crash before any result was produced (the command dispatcher sat above the
+  evaluation code); the identical code was re-run.
+- Observed after the run, not acted on: the per-step parsimony rule (§6, step 3) lets small losses
+  accumulate (see V3_RESULTS.md, "Reading the result"). A future protocol should cap the cumulative loss.

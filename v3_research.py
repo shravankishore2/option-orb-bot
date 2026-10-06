@@ -197,9 +197,6 @@ def features():
         print(f"  {kind}: {len(df):,} signals, minute-of-day volume baseline for {len(rows):,}", flush=True)
 
 
-if __name__ == "__main__":
-    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
-    {"replay": replay, "features": features, "evaluate": lambda: evaluate_all()}.get(cmd, lambda: sys.exit(__doc__))()
 
 
 # ---------------------------------------------------------------- §6-8 evaluation
@@ -562,3 +559,8 @@ def write_report(rows, log, n_total, best, obs, p, variants, nm):
     md += ["", "## Feature selection log (§6)", "", "```"] + log + ["```", ""]
     Path("docs/V3_RESULTS.md").write_text("\n".join(md) + "\n")
     print("\n".join(md))
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    {"replay": replay, "features": features, "evaluate": evaluate_all}.get(cmd, lambda: sys.exit(__doc__))()
