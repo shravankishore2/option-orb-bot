@@ -2,6 +2,7 @@
 
 import functools
 import json
+import re
 
 import pytest
 
@@ -102,7 +103,7 @@ def test_empty_scorecard(open_client):
 
 # --- live view: SKIP rows carry the tracker's live state ---------------------------------
 
-def _live_files(files, monkeypatch):
+def _live_files(files, monkeypatch, extra=()):
     import pandas as pd
     day = webapp.now_ist().date().isoformat()
     dec = pd.DataFrame([
@@ -114,33 +115,73 @@ def _live_files(files, monkeypatch):
          "stop": 542.6},
         {"date": day, "time": "11:30:00", "symbol": "MARICO", "direction": "BUY", "entry_price": 797.1,
          "ORH": 795, "ORL": 785, "prev_close": 780, "score": 0.53, "threshold": 0.644, "decision": "SKIP",
-         "stop": 787.1}])
+         "stop": 787.1}, *extra])
     dec.to_csv(files / "dec.csv", index=False)
     monkeypatch.setattr(webapp, "DECISIONS_FILE", str(files / "dec.csv"))
     monkeypatch.setattr(webapp, "SENT_FILE", str(files / "none.csv"))
 
-    def row(sym, d, go, price, pnl, status="open", exit_time=None):
+    def row(sym, d, go, price, pnl, initial, stop_now, status="open", exit_time=None):
+        closed = status != "open"
         return {"id": f"{day}|{sym}|{d}", "symbol": sym, "direction": d, "go": go,
-                "decision": "GO" if go else "SKIP", "price": price, "pnl_pct": pnl, "trail_stop": 1.0,
+                "decision": "GO" if go else "SKIP", "price": price, "pnl_pct": pnl,
+                "initial_stop": initial, "trail_stop": stop_now, "exit_stop": stop_now if closed else None,
                 "best_pct": abs(pnl) + 0.1, "worst_pct": -0.2, "status": status,
-                "status_label": "open" if status == "open" else "stopped out", "exit_time": exit_time}
+                "status_label": "stopped out (trailing stop)" if closed else "open", "exit_time": exit_time}
     snap = {"day": day, "as_of": f"{day}T14:20:20+05:30", "version": "v",
-            "rows": [row("DMART", "SELL", True, 3587.1, 1.06), row("KALYANKJIL", "BUY", False, 562.0, 2.07),
-                     row("MARICO", "BUY", False, 790.8, -0.79, "stopped", "13:05")]}
+            "rows": [row("DMART", "SELL", True, 3587.1, 1.06, 3686.0, 3648.7),
+                     row("KALYANKJIL", "BUY", False, 562.0, 2.07, 542.6, 551.05),
+                     row("MARICO", "BUY", False, 790.8, -0.79, 787.1, 790.8, "trailed", "13:05")]}
     (files / "tracker.json").write_text(json.dumps(snap))
 
 
-def test_live_view_shows_all_signals_with_live_state_for_skips(open_client, files, monkeypatch):
+def _bodies(html):
+    """The signal tbodies in page order: [(symbol, decision, body html)]."""
+    return [(m.group(2), m.group(1), m.group(0)) for m in
+            re.finditer(r'<tbody class="sig[^"]*"[^>]*data-decision="(\w+)"[^>]*data-symbol="([^"]+)".*?</tbody>', html, re.S)]
+
+
+def test_live_view_is_one_table_with_go_pinned_and_live_state_for_skips(open_client, files, monkeypatch):
     _live_files(files, monkeypatch)
-    html = open_client.get("/live").get_data(as_text=True)          # default: all signals
-    assert "KALYANKJIL" in html and "MARICO" in html and "DMART" in html
-    assert "₹562.00" in html and "+2.07%" in html                    # SKIP: current + % from entry
-    assert "stopped out 13:05" in html                                # closed SKIP: status + exit time
+    html = open_client.get("/live").get_data(as_text=True)
+    assert html.count('<table class="sig-table"') == 1 and "signal-panel" not in html     # one table, not BUY/SELL
+    rows = _bodies(html)
+    assert [r[0] for r in rows] == ["DMART", "MARICO", "KALYANKJIL"]           # GO first, then newest first
+    kal = dict((r[0], r[2]) for r in rows)["KALYANKJIL"]
+    assert "₹550.60 → ₹562.00" in kal and "+2.07%" in kal                    # SKIP: entry -> current, % from entry
+    assert 'class="dir dir-buy"' in kal and "tracked, not taken" in kal
     assert html.count("tracked, not taken") == 2 and "SKIP (TRACKED, NOT TAKEN)" in html
-    assert "1/2" in html and "+0.64%" in html                         # SKIPs in profit now, avg live P&L
-    assert webapp.SELECTIVE_NOTE in html
-    go_only = open_client.get("/live?show=go").get_data(as_text=True)
-    assert "DMART" in go_only and "KALYANKJIL" not in go_only
+    assert "1/2" in html and "+0.64%" in html and webapp.SELECTIVE_NOTE in html
+    for chip in ('data-value="GO"', 'data-value="SKIP"', 'data-value="BUY"', 'data-value="SELL"',
+                 'data-value="open"', 'data-value="closed"'):
+        assert chip in html
+    assert 'aria-sort="none"' in html and 'aria-expanded="false"' in html and "live.js" in html
+
+
+def test_live_view_shows_current_initial_and_exit_stops(open_client, files, monkeypatch):
+    _live_files(files, monkeypatch)
+    rows = {r[0]: r[2] for r in _bodies(open_client.get("/live").get_data(as_text=True))}
+    assert "₹551.05" in rows["KALYANKJIL"] and "initial ₹542.60" in rows["KALYANKJIL"]   # open: current stop
+    assert "at exit · initial ₹787.10" in rows["MARICO"] and "₹790.80" in rows["MARICO"]  # closed: stop at exit
+    assert "Trailed out" in rows["MARICO"] and "at 13:05" in rows["MARICO"]
+    assert "Opening range high (ORH)" in rows["MARICO"] and "₹795.00" in rows["MARICO"]    # in the detail row
+    for body in rows.values():
+        stop_cell = body.split('data-label="Stop"')[1].split("</td>")[0]
+        assert "—" not in stop_cell.split("<small")[0], "every row must show a stop"
+
+
+def test_live_fragment_is_strip_and_table_only(open_client, files, monkeypatch):
+    _live_files(files, monkeypatch)
+    frag = open_client.get("/live?fragment=1").get_data(as_text=True)
+    assert 'id="live-strip"' in frag and 'id="live-table"' in frag and "<nav" not in frag
+
+
+def test_a_skip_without_a_price_yet_does_not_break_the_page(open_client, files, monkeypatch):
+    day = webapp.now_ist().date().isoformat()
+    _live_files(files, monkeypatch, extra=[{"date": day, "time": "14:20:00", "symbol": "UNITDSPR", "direction": "BUY",
+                                           "entry_price": 1360.0, "ORH": 1350, "ORL": 1340, "prev_close": 1330,
+                                           "score": 0.48, "threshold": 0.644, "decision": "SKIP", "stop": 1350.0}])
+    r = open_client.get("/live")
+    assert r.status_code == 200 and "UNITDSPR" in r.get_data(as_text=True)
 
 
 def test_signal_summary_counts_and_skip_pnl():

@@ -206,3 +206,62 @@ def test_scorecard_counts():
     assert [d["date"] for d in sc["days"]] == ["2026-10-02", "2026-10-01"]
     assert sc["days"][1]["replayed"] and not sc["days"][0]["replayed"]
     assert shadow.scorecard(df, by="baseline_go")["total"]["nogo"]["n"] == 0
+
+
+# --- stops: initial at entry, current while open, in force at the exit -------------------
+
+def _tracker(book):
+    return {r["id"]: r for r in json.loads(book.tracker_file.read_text())["rows"]}
+
+
+@pytest.mark.parametrize("kind", ["TRAIL", "STOP", "HOLD"])
+def test_every_open_position_has_a_current_stop_and_every_exit_its_stop(kind, day, book):
+    candles = days(day)[kind]
+    daily = make_daily([day - dt.timedelta(days=k) for k in range(20, 0, -1)])
+    eng = L.LiveEngine(FakeSource({"X": candles}, daily), FakeModel(0.9), list(shadow.FEATURE_COLUMNS), 0.5,
+                       ["X"], {}, version="champ-test", baseline=Base(0.2))
+    seen_open = 0
+    for now in cycles(day):
+        book.record(eng.cycle(now), now)
+        book.update(eng.today_candles, now)
+        for r in _tracker(book).values():
+            assert r["initial_stop"] is not None
+            if r["status"] == "open" and r["price"] is not None:     # walked at least one candle
+                seen_open += 1
+                assert r["trail_stop"] is not None, "an open position must show its current stop"
+                long = r["direction"] == "BUY"
+                assert (r["trail_stop"] >= r["initial_stop"]) if long else (r["trail_stop"] <= r["initial_stop"])
+    book.update({"X": L.completed(candles, at(day, 15, 40, 20))}, at(day, 15, 40, 20), final=True)
+    out = next(iter(book.closed.values()))
+    row = next(iter(_tracker(book).values()))
+    assert seen_open > 0
+    assert row["exit_stop"] is not None and row["trail_stop"] == row["exit_stop"] == out["exit_stop"]
+    if out["exit_reason"] in ("STOP", "TRAIL"):
+        # exits.simulate fills a stop or trail exit exactly at the stop in force
+        assert out["exit_stop"] == pytest.approx(out["exit_price"], abs=0.01)
+    else:                                       # closed at 15:15 above a long's stop
+        assert out["exit_stop"] < out["exit_price"]
+    if out["exit_reason"] == "TRAIL":
+        assert out["exit_stop"] > row["initial_stop"]        # the trail had moved the stop up
+
+
+def test_outcomes_written_before_exit_stop_existed_are_migrated_not_rewritten(day, book):
+    old_cols = shadow.OUTCOME_COLUMNS[:-1]
+    old = {c: "" for c in old_cols} | {"signal_id": f"{day}|OLD|BUY", "date": day.isoformat(), "status": "trailed",
+                                        "exit_reason": "TRAIL", "exit_price": "101.25", "pnl_pct": "0.5"}
+    shadow._append(book.outcomes_file, old_cols, [old])
+    before = book.outcomes_file.read_text().splitlines()[1]
+    candles = days(day)["STOP"]
+    run_session(day, candles, book)
+    lines = book.outcomes_file.read_text().splitlines()
+    assert lines[0].split(",") == shadow.OUTCOME_COLUMNS
+    assert lines[1] == before + ","                          # old row kept, blank exit_stop
+    o = shadow._read(book.outcomes_file)
+    assert len(o) == 2 and pd.isna(o["exit_stop"].iloc[0]) and o["exit_stop"].iloc[1] > 0
+    assert len(shadow.labelled_rows(book.signals_file, book.outcomes_file)) == 1   # only signals we logged
+
+
+def test_old_labels_show_the_exit_price_as_the_stop_for_stop_and_trail_exits():
+    assert shadow._exit_stop({"exit_reason": "TRAIL", "exit_price": 101.2, "exit_stop": ""}) == 101.2
+    assert shadow._exit_stop({"exit_reason": "TIME", "exit_price": 101.2, "exit_stop": None}) is None
+    assert shadow._exit_stop({"exit_reason": "TIME", "exit_price": 101.2, "exit_stop": 99.4}) == 99.4

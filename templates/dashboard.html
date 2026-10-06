@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <title>ORBITAL · {{ active_tab|capitalize }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    {% if active_tab == "live" %}<meta http-equiv="refresh" content="30">{% endif %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -56,89 +55,48 @@
     <!-- ============================================================ LIVE -->
     {% if active_tab == "live" %}
 
-    {% set sm = summary %}
-    <section class="stats-row">
-        <div class="stat-card"><span>SIGNALS TODAY</span><strong class="amber">{{ sm.signals }}</strong></div>
-        <div class="stat-card"><span>GO (SENT)</span><strong class="green">{{ sm.go }}</strong></div>
-        <div class="stat-card"><span>SKIP (TRACKED, NOT TAKEN)</span><strong class="muted">{{ sm.skip }}</strong></div>
-        <div class="stat-card"><span>SKIPS IN PROFIT NOW</span><strong>{% if sm.skip_priced %}{{ sm.skip_in_profit }}/{{ sm.skip_priced }}{% else %}—{% endif %}</strong>
-            <small>latest candle, or exit if closed</small></div>
-        <div class="stat-card"><span>SKIP AVG LIVE P&amp;L</span><strong>{% if sm.skip_avg_pnl is not none %}<em class="{{ 'pos' if sm.skip_avg_pnl >= 0 else 'neg' }}">{{ "%+.2f"|format(sm.skip_avg_pnl) }}%</em>{% else %}—{% endif %}</strong>
-            <small>paper, gross</small></div>
-        <div class="stat-card"><span>GO THRESHOLD</span><strong>{{ model.threshold }}</strong>{% if sm.stale %}<small>{{ sm.stale }} stale (not sent)</small>{% endif %}</div>
-    </section>
+    {% with part = "strip" %}{% include "live_fragment.html" %}{% endwith %}
     <p class="selective-note">{{ selective_note }}</p>
 
-    <section class="filter-strip">
-        <div class="filter-label">UP TO TIME</div>
-        <div class="time-buttons">
+    <section class="filter-strip" aria-label="Filters">
+        <div class="filter-label" id="time-label">UP TO TIME</div>
+        <div class="time-buttons" role="group" aria-labelledby="time-label">
             {% for t in time_filters %}
-            <a href="{{ url_for('live', time=t, show=show) }}" class="time-btn {% if selected_time == t %}active{% endif %}">{{ t }}</a>
+            <a href="{{ url_for('live', time=t) }}" class="time-btn {% if selected_time == t %}active{% endif %}"
+               {% if selected_time == t %}aria-current="true"{% endif %}>{{ t }}</a>
             {% endfor %}
-        </div>
-        <div class="toggle">
-            <a href="{{ url_for('live', time=selected_time, show='all') }}" class="time-btn {% if show == 'all' %}active{% endif %}">All signals</a>
-            <a href="{{ url_for('live', time=selected_time, show='go') }}" class="time-btn {% if show == 'go' %}active{% endif %}">GO only</a>
         </div>
     </section>
 
-    {% if legacy %}
-    <div class="banner">No decision log for today yet — showing the Telegram sent log.</div>
-    {% endif %}
+    <section class="chip-bar" aria-label="Show signals">
+        <div class="chip-group" role="group" aria-label="Decision">
+            <button type="button" class="chip" data-filter="decision" data-value="all" aria-pressed="true">All</button>
+            <button type="button" class="chip" data-filter="decision" data-value="GO" aria-pressed="false">GO</button>
+            <button type="button" class="chip" data-filter="decision" data-value="SKIP" aria-pressed="false">SKIP</button>
+        </div>
+        <div class="chip-group" role="group" aria-label="Direction">
+            <button type="button" class="chip" data-filter="dir" data-value="all" aria-pressed="true">Buy &amp; Sell</button>
+            <button type="button" class="chip" data-filter="dir" data-value="BUY" aria-pressed="false">Buy</button>
+            <button type="button" class="chip" data-filter="dir" data-value="SELL" aria-pressed="false">Sell</button>
+        </div>
+        <div class="chip-group" role="group" aria-label="Position">
+            <button type="button" class="chip" data-filter="state" data-value="all" aria-pressed="true">Open &amp; Closed</button>
+            <button type="button" class="chip" data-filter="state" data-value="open" aria-pressed="false">Open</button>
+            <button type="button" class="chip" data-filter="state" data-value="closed" aria-pressed="false">Closed</button>
+        </div>
+        <p class="chip-count" id="sig-count" aria-live="polite"></p>
+    </section>
 
-    <main class="tables-grid">
-        {% for side, rows, label in [("sell", sell_signals, "▼ SELL"), ("buy", buy_signals, "▲ BUY")] %}
-        <section class="signal-panel {{ side }}-panel">
-            <div class="panel-title"><h2>{{ label }} <span>({{ rows|length }})</span></h2></div>
-            {% if rows %}
-            <div class="table-wrap">
-                <table>
-                    <thead><tr>
-                        <th>Time</th><th>Symbol</th><th>Decision</th><th>Score</th>
-                        <th>Entry</th><th>Current</th>
-                        <th class="sortable-diff" onclick="cycleSort(this)"><span class="diff-header">% from entry <span class="sort-arrow">↕</span></span></th>
-                        <th>Trailing stop</th><th>Best</th><th>Worst</th><th>Status</th><th>ORH</th><th>ORL</th>
-                    </tr></thead>
-                    <tbody>
-                    {% for s in rows %}
-                    <tr class="row-{{ s.decision|lower }}">
-                        <td>{{ s.time }}</td>
-                        <td class="symbol {{ side }}-symbol">{{ s.symbol }}</td>
-                        <td><span class="decision {{ s.decision|lower }}">{{ s.decision }}</span>{% if s.decision == "SKIP" %}<small class="paper-tag" title="paper/shadow position: the model did not take it">tracked, not taken</small>{% endif %}</td>
-                        <td>
-                            {% if s.score %}
-                            <div class="scorebar" title="score {{ s.score }} vs threshold">
-                                <i style="width:{{ s.score_pct }}%"></i><b style="left:{{ s.thr_pct }}%"></b>
-                            </div><small>{{ s.score }}</small>
-                            {% endif %}
-                        </td>
-                        <td>₹{{ s.entry }}</td>
-                        <td>{% if s.current %}₹{{ s.current }}{% endif %}</td>
-                        <td data-v="{{ s.diff_raw if s.diff_raw is not none else '' }}"
-                            class="{% if s.diff_raw is not none and s.diff_raw != '' %}{% if s.diff_raw >= 0 %}pos{% else %}neg{% endif %}{% endif %}">{{ s.diff }}</td>
-                        <td>{% if s.trail %}₹{{ s.trail }}{% elif s.status and s.status != "open" %}—{% endif %}</td>
-                        <td class="{% if s.best_raw is not none and s.best_raw != '' %}{% if s.best_raw >= 0 %}pos{% else %}neg{% endif %}{% endif %}">{{ s.best }}</td>
-                        <td class="{% if s.worst_raw is not none and s.worst_raw != '' %}{% if s.worst_raw >= 0 %}pos{% else %}neg{% endif %}{% endif %}">{{ s.worst }}</td>
-                        <td>{% if s.status %}<span class="trk-status s-{{ s.status }}">{{ s.status_label }}</span>{% endif %}</td>
-                        <td>₹{{ s.orh }}</td>
-                        <td>₹{{ s.orl }}</td>
-                    </tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <div class="empty-state">No {{ side|upper }} {% if show == 'go' %}GO {% endif %}signals up to {{ selected_time }}.</div>
-            {% endif %}
-        </section>
-        {% endfor %}
-    </main>
+    {% with part = "table" %}{% include "live_fragment.html" %}{% endwith %}
+
     <p class="footnote">Decisions are made on completed 5-minute candles. A signal first seen more than
         10 minutes late (e.g. after a restart) is logged as STALE and not sent. The bar shows the model's
-        score; the white tick is the GO threshold. Current, % from entry, trailing stop, Best/Worst and
-        Status come from the bot's paper tracker, updated after every 5-minute cycle (this page reloads
-        every 30 s); "% from entry", Best and Worst are signed in the trade's favour. SKIP rows are
-        paper positions the model did not take.</p>
+        score; the white tick is the GO threshold. Price, stop, range of move and status come from the bot's
+        paper tracker, updated after every 5-minute cycle (this page refreshes itself every 30 s); "% from
+        entry", best and worst are signed in the trade's favour. The stop is the one in force now, or at the
+        exit for closed positions; the initial stop is shown under it. SKIP rows are paper positions the
+        model did not take. Open a row for the opening range and other details.</p>
+    <script src="{{ url_for('static', filename='live.js') }}"></script>
     {% endif %}
 
 
@@ -171,7 +129,7 @@
                 <thead><tr>
                     <th>Ticker</th><th>Signal</th><th>Dir</th><th>Score</th><th>Model</th>
                     <th class="num">Entry</th><th class="num">Current</th><th class="num">% from entry</th>
-                    <th class="num">Stop-loss</th><th class="num">Trailing stop</th><th class="num">Target</th>
+                    <th class="num">Initial stop</th><th class="num">Stop now / at exit</th><th class="num">Target</th>
                     <th class="num">Best</th><th class="num">Worst</th><th>Status</th><th>Exit</th>
                 </tr></thead>
                 <tbody id="trk-body"></tbody>

@@ -1,0 +1,134 @@
+{#- The live summary strip (part="strip") and signals table (part="table"). Rendered inside the
+    Live page and, both together (/live?fragment=1), every 30 s when the page refreshes itself; live.js then
+    re-applies the filters, sort order and open detail rows. -#}
+{%- macro money(v) -%}{% if v %}₹{{ v }}{% else %}—{% endif %}{%- endmacro -%}
+{%- macro signed(raw, text) -%}
+    {%- if raw is not none and raw != "" -%}<span class="{{ 'pos' if raw >= 0 else 'neg' }}">{{ text }}</span>{%- else -%}—{%- endif -%}
+{%- endmacro -%}
+{%- if part != "table" %}
+<div id="live-strip">
+    {% set sm = summary %}
+    <section class="stats-row" aria-label="Today's signals">
+        <div class="stat-card"><span>SIGNALS TODAY</span><strong class="amber">{{ sm.signals }}</strong></div>
+        <div class="stat-card"><span>GO (SENT)</span><strong class="green">{{ sm.go }}</strong></div>
+        <div class="stat-card"><span>SKIP (TRACKED, NOT TAKEN)</span><strong>{{ sm.skip }}</strong></div>
+        <div class="stat-card"><span>SKIPS IN PROFIT NOW</span><strong>{% if sm.skip_priced %}{{ sm.skip_in_profit }}/{{ sm.skip_priced }}{% else %}—{% endif %}</strong>
+            <small>latest candle, or exit if closed</small></div>
+        <div class="stat-card"><span>SKIP AVG LIVE P&amp;L</span><strong>{% if sm.skip_avg_pnl is not none %}<em class="{{ 'pos' if sm.skip_avg_pnl >= 0 else 'neg' }}">{{ "%+.2f"|format(sm.skip_avg_pnl) }}%</em>{% else %}—{% endif %}</strong>
+            <small>paper, gross</small></div>
+        <div class="stat-card"><span>GO THRESHOLD</span><strong>{{ model.threshold }}</strong>{% if sm.stale %}<small>{{ sm.stale }} stale (not sent)</small>{% endif %}</div>
+    </section>
+</div>
+{%- endif %}
+{%- if part != "strip" %}
+<div id="live-table" data-count="{{ signals|length }}">
+
+    {% if legacy %}
+    <div class="banner">No decision log for today yet — showing the Telegram sent log.</div>
+    {% endif %}
+
+    {% if signals %}
+    <table class="sig-table" id="sig-table">
+        <caption class="sr-only">Today's signals up to {{ selected_time }}: GO first, then signals the model skipped
+            (tracked on paper, not taken). Column headers sort; each row's last button shows details.</caption>
+        <colgroup>
+            <col class="c-signal"><col class="c-decision"><col class="c-score"><col class="c-price">
+            <col class="c-stop"><col class="c-range"><col class="c-status"><col class="c-more">
+        </colgroup>
+        <thead>
+        <tr>
+            <th scope="col" aria-sort="none"><button type="button" class="sort" data-key="time">Signal<i aria-hidden="true"></i></button></th>
+            <th scope="col">Decision</th>
+            <th scope="col" aria-sort="none"><button type="button" class="sort" data-key="score">Score<i aria-hidden="true"></i></button></th>
+            <th scope="col" aria-sort="none"><button type="button" class="sort" data-key="pnl">Price · from entry<i aria-hidden="true"></i></button></th>
+            <th scope="col">Stop</th>
+            <th scope="col" aria-sort="none"><button type="button" class="sort" data-key="best">Range of move<i aria-hidden="true"></i></button></th>
+            <th scope="col" aria-sort="none"><button type="button" class="sort" data-key="status">Status<i aria-hidden="true"></i></button></th>
+            <th scope="col"><span class="sr-only">Details</span></th>
+        </tr>
+        </thead>
+        {% for s in signals %}
+        {% set closed = s.status and s.status != "open" %}
+        {% set did = "d-" ~ loop.index %}
+        <tbody class="sig {{ 'is-go' if s.decision == 'GO' else ('is-stale' if s.decision == 'STALE' else 'is-skip') }}"
+               data-id="{{ s.id }}" data-decision="{{ s.decision }}" data-dir="{{ s.direction }}"
+               data-state="{{ 'closed' if closed else 'open' }}" data-time="{{ s.time }}" data-symbol="{{ s.symbol }}"
+               data-score="{{ s.score_raw if s.score_raw is not none else '' }}"
+               data-pnl="{{ s.diff_raw if s.diff_raw is not none else '' }}"
+               data-best="{{ s.best_raw if s.best_raw is not none else '' }}"
+               data-status="{{ s.status }}">
+        <tr class="sig-main">
+            <td class="c-signal" data-label="Signal">
+                <span class="sig-time">{{ s.time[:5] }}</span>
+                <strong class="sig-sym">{{ s.symbol }}</strong>
+                <span class="dir dir-{{ s.direction|lower }}">{{ s.direction }}</span>
+            </td>
+            <td data-label="Decision">
+                {% if s.decision == "GO" %}<span class="dec dec-go">GO</span>
+                {% elif s.decision == "STALE" %}<span class="dec dec-stale" title="first seen more than 10 minutes late; not sent">STALE <small>not sent</small></span>
+                {% else %}<span class="dec dec-skip" title="paper (shadow) position: the model did not take it">SKIP <small>tracked, not taken</small></span>{% endif %}
+            </td>
+            <td data-label="Score">
+                {% if s.score_raw is not none %}
+                <span class="score">
+                    <span class="scorebar" role="img" aria-label="score {{ s.score }} against GO threshold {{ '%.3f'|format(s.threshold) if s.threshold is not none else '' }}">
+                        <i style="width:{{ s.score_pct }}%"></i><b style="left:{{ s.thr_pct }}%"></b>
+                    </span>
+                    <span class="num">{{ "%.3f"|format(s.score_raw) }}</span>
+                </span>
+                {% endif %}
+            </td>
+            <td data-label="Price · from entry">
+                <span class="big">{{ signed(s.diff_raw, s.diff) }}</span>
+                <small class="sub">{{ money(s.entry) }} → {{ money(s.current) }}</small>
+            </td>
+            <td data-label="Stop">
+                <span class="big num">{{ money(s.trail) }}</span>
+                <small class="sub">{% if closed %}at exit · {% endif %}initial {{ money(s.initial_stop) }}</small>
+            </td>
+            <td data-label="Range of move">
+                {% if s.best_raw is not none and s.worst_raw is not none %}
+                {% set bw = [50, (s.best_raw|abs) / scale * 50]|min if s.best_raw > 0 else 0 %}
+                {% set ww = [50, (s.worst_raw|abs) / scale * 50]|min if s.worst_raw < 0 else 0 %}
+                <span class="range" role="img" aria-label="worst {{ s.worst }}, best {{ s.best }}">
+                    <i class="r-neg" style="width:{{ '%.1f'|format(ww) }}%"></i><i class="r-pos" style="width:{{ '%.1f'|format(bw) }}%"></i>
+                </span>
+                <small class="sub"><span class="neg">{{ s.worst }}</span> · <span class="pos">{{ s.best }}</span></small>
+                {% else %}—{% endif %}
+            </td>
+            <td data-label="Status">
+                {% if s.status %}<span class="pill s-{{ s.status }}" title="{{ s.status_label }}">{{ s.status_short }}</span>
+                {% if s.exit_time %}<small class="sub">at {{ s.exit_time }}</small>{% endif %}{% else %}—{% endif %}
+            </td>
+            <td class="c-more">
+                <button type="button" class="expand" aria-expanded="false" aria-controls="{{ did }}"
+                        aria-label="Details for {{ s.symbol }} {{ s.direction }}">
+                    <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 7.5l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+            </td>
+        </tr>
+        <tr class="sig-detail" id="{{ did }}" hidden>
+            <td colspan="8">
+                <dl class="detail-grid">
+                    <div><dt>Opening range high (ORH)</dt><dd>{{ money(s.orh) }}</dd></div>
+                    <div><dt>Opening range low (ORL)</dt><dd>{{ money(s.orl) }}</dd></div>
+                    <div><dt>Previous close</dt><dd>{{ money(s.prev_close) }}</dd></div>
+                    <div><dt>Entry</dt><dd>{{ money(s.entry) }} at {{ s.time[:5] }}</dd></div>
+                    <div><dt>Initial stop</dt><dd>{{ money(s.initial_stop) }}</dd></div>
+                    <div><dt>{{ "Stop at exit" if closed else "Current stop" }}</dt><dd>{{ money(s.trail) }}{% if s.stop_moved %} <small>(trailed)</small>{% endif %}</dd></div>
+                    <div><dt>Best / worst so far</dt><dd>{{ signed(s.best_raw, s.best) }} / {{ signed(s.worst_raw, s.worst) }}</dd></div>
+                    <div><dt>Score vs GO threshold</dt><dd>{% if s.score_raw is not none %}{{ "%.3f"|format(s.score_raw) }} vs {{ "%.3f"|format(s.threshold) if s.threshold is not none else "—" }}{% else %}—{% endif %}</dd></div>
+                    <div><dt>Status</dt><dd>{{ s.status_label or "—" }}{% if s.exit_time %} at {{ s.exit_time }}{% endif %}</dd></div>
+                    <div><dt>Decided at</dt><dd>{{ s.decided_at or "—" }}{% if s.age_min is not none %} ({{ "%.1f"|format(s.age_min) }} min after the candle){% endif %}</dd></div>
+                </dl>
+            </td>
+        </tr>
+        </tbody>
+        {% endfor %}
+    </table>
+    <div class="empty-state" id="sig-filtered-empty" hidden>No signals match these filters.</div>
+    {% else %}
+    <div class="empty-state">No signals up to {{ selected_time }} yet. They appear from the 09:40 cycle.</div>
+    {% endif %}
+</div>
+{%- endif %}

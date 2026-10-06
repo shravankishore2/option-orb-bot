@@ -320,11 +320,17 @@ def signal_summary(rows):
     """The summary strip: counts by decision, and how today's SKIPs are doing (latest
     candle for open ones, the exit for closed ones). rows: dicts with decision, pnl_pct."""
     skip = [r for r in rows if r.get("decision") == "SKIP"]
-    priced = [r["pnl_pct"] for r in skip if r.get("pnl_pct") is not None]
+    priced = [v for v in (r.get("pnl_pct") for r in skip)
+              if isinstance(v, (int, float)) and v == v]           # not None, "", or NaN
     return {"signals": len(rows), "go": sum(r.get("decision") == "GO" for r in rows),
             "skip": len(skip), "stale": sum(r.get("decision") == "STALE" for r in rows),
             "skip_priced": len(priced), "skip_in_profit": sum(v > 0 for v in priced),
             "skip_avg_pnl": sum(priced) / len(priced) if priced else None}
+
+
+# Status pill text (the full label is in the expanded row and the title).
+STATUS_SHORT = {"open": "Open", "target": "Target", "stopped": "Stopped", "trailed": "Trailed out",
+                "eod": "Closed EOD"}
 
 
 def live_rows(day, cutoff, show):
@@ -371,22 +377,38 @@ def live_rows(day, cutoff, show):
             diff = (((c - e) if direction == "BUY" else (e - c)) / e * 100) if e and c else None
         is_open = t.get("status") == "open"
         sc, th = num(r.get("score")), num(r.get("threshold"))
+        stop_now = num(t.get("trail_stop"))
+        initial = num(t.get("initial_stop")) if t.get("initial_stop") is not None else num(r.get("stop"))
         rows.append({
+            "id": shadow.signal_id(r.get("date"), r["symbol"], r["direction"]),
             "time": str(r["time"]), "symbol": str(r["symbol"]).upper(), "direction": direction,
             "decision": str(r["decision"]),
             "entry": price(e), "current": price(c), "diff": pct(diff), "diff_raw": diff, "pnl_pct": diff,
-            "trail": price(t.get("trail_stop")) if is_open else "",
+            "trail": price(stop_now), "trail_raw": stop_now,
+            "initial_stop": price(initial), "stop_moved": stop_now is not None and initial is not None
+                                                          and abs(stop_now - initial) > 1e-9,
             "best": pct(t.get("best_pct")), "best_raw": num(t.get("best_pct")),
             "worst": pct(t.get("worst_pct")), "worst_raw": num(t.get("worst_pct")),
-            "status": t.get("status", ""),
-            "status_label": (t.get("status_label", "") + (f" {t['exit_time']}" if t.get("exit_time") else "")),
+            "status": t.get("status", ""), "status_short": STATUS_SHORT.get(t.get("status", ""), ""),
+            "status_label": t.get("status_label", ""), "exit_time": t.get("exit_time") or "",
+            "score_raw": num(r.get("score")), "threshold": num(r.get("threshold")),
+            "prev_close": price(r.get("prev_close")), "target": price(t.get("target")),
+            "decided_at": str(r.get("decided_at") or "")[:8], "age_min": num(r.get("age_min")),
             "orh": price(r.get("ORH")), "orl": price(r.get("ORL")), "stop": price(r.get("stop")),
             "score": "" if sc is None else f"{sc:.2f}",
             "score_pct": 0 if sc is None else round(min(100, max(0, sc * 100)), 1),
             "thr_pct": 0 if th is None else round(min(100, max(0, th * 100)), 1),
         })
-    out = pd.DataFrame(rows).sort_values(["time", "symbol"], ascending=[False, True])
+    out = pd.DataFrame(rows)
+    out["go_first"] = (out["decision"] != "GO").astype(int)         # GO pinned to the top
+    out = out.sort_values(["go_first", "time", "symbol"], ascending=[True, False, True]).drop(columns="go_first")
     return out, legacy
+
+
+def range_scale(rows):
+    """One % scale for every row's best/worst bar, so bars compare across rows."""
+    vals = [abs(v) for r in rows for v in (r.get("best_raw"), r.get("worst_raw")) if isinstance(v, (int, float))]
+    return max([1.0] + vals)
 
 
 # ------------------------------------------------------------------ historical
@@ -540,19 +562,22 @@ def index():
 
 @app.route("/live")
 def live():
+    """All of today's signals in one table. ?fragment=1 returns only the parts the
+    page swaps in when it refreshes itself (summary strip + table body)."""
     cutoff = request.args.get("time", "15:15")
-    show = request.args.get("show", "all")
+    if cutoff not in TIME_FILTERS:
+        cutoff = "15:15"
     day = now_ist().date().isoformat()
 
-    rows, legacy = live_rows(day, cutoff, show)
+    rows, legacy = live_rows(day, cutoff, "all")
     everything, _ = live_rows(day, None, "all")
-
-    def side(d):
-        return records(rows[rows["direction"] == d]) if not rows.empty else []
-
-    return render("live", selected_time=cutoff, show=show, legacy=legacy,
-                  summary=signal_summary(records(everything)), selective_note=SELECTIVE_NOTE,
-                  buy_signals=side("BUY"), sell_signals=side("SELL"))
+    signals = [{k: (None if isinstance(v, float) and v != v else v) for k, v in r.items()}
+               for r in (rows.to_dict("records") if not rows.empty else [])]       # NaN -> None
+    kw = dict(selected_time=cutoff, legacy=legacy, summary=signal_summary(records(everything)),
+              selective_note=SELECTIVE_NOTE, signals=signals, scale=range_scale(signals))
+    if request.args.get("fragment") == "1":
+        return render_template("live_fragment.html", model=model_info(), **kw)
+    return render("live", **kw)
 
 
 # ------------------------------------------------------------------ tracker (live push)

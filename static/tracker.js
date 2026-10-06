@@ -30,7 +30,7 @@
       <td class="num">${money(r.price)}</td>
       ${pct(r.pnl_pct)}
       <td class="num">${money(r.stop)}</td>
-      <td class="num">${closed ? "—" : money(r.trail_stop)}</td>
+      <td class="num" title="${closed ? "stop in force at the exit" : "stop in force now"}">${money(r.trail_stop)}</td>
       <td class="num">${money(r.target)}</td>
       ${pct(r.best_pct)}
       ${pct(r.worst_pct)}

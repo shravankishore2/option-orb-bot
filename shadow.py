@@ -12,7 +12,9 @@ Files (data/live/, git-ignored):
                         threshold, model versions, features (x_*). Never edited.
   shadow_outcomes.csv   append-only, one row per signal, written ONCE when its
                         outcome is complete (stop, trail, target, the 15:15 exit,
-                        or the end of the session). That row is the label.
+                        or the end of the session). That row is the label. It also
+                        keeps the stop in force at the exit (exit_stop), so the
+                        tracker can show it after the position has closed.
   tracker.json          today's signals with their live state, rewritten every
                         cycle; the dashboard pushes it to the browser.
 
@@ -53,8 +55,11 @@ SIGNAL_COLUMNS = (
      "baseline_version", "baseline_score", "baseline_threshold", "baseline_go",
      "stop", "trail_distance", "target", "force_exit", "decided_at", "logged_at", "source"]
     + [f"x_{f}" for f in FEATURE_COLUMNS])
+# New columns go at the END: a file written before they existed is migrated once
+# (header rewritten, old rows left blank in the new columns), never reordered.
 OUTCOME_COLUMNS = ["signal_id", "date", "status", "exit_reason", "exit_candle", "exit_time",
-                   "exit_price", "pnl_pct", "profit", "mfe_pct", "mae_pct", "labelled_at", "source"]
+                   "exit_price", "pnl_pct", "profit", "mfe_pct", "mae_pct", "labelled_at", "source",
+                   "exit_stop"]
 
 # exits.simulate reason -> tracker status
 STATUS = {"STOP": "stopped", "TRAIL": "trailed", "TARGET": "target", "TIME": "eod", "LAST": "eod"}
@@ -66,11 +71,28 @@ def signal_id(date, symbol, direction):
     return f"{date}|{symbol}|{direction}"
 
 
+def _migrate_header(path, columns):
+    """A file written before `columns` gained new trailing columns gets the new
+    header; its rows are kept as they are (blank in the new columns)."""
+    with open(path, newline="") as f:
+        have = next(csv.reader(f), [])
+    if have == columns:
+        return
+    if have != columns[:len(have)]:
+        raise ValueError(f"{path}: columns {have} are not a prefix of {columns}")
+    old = pd.read_csv(path, dtype=str, keep_default_na=False)
+    tmp = path.with_suffix(".tmp")
+    old.reindex(columns=columns).to_csv(tmp, index=False)
+    os.replace(tmp, path)
+
+
 def _append(path, columns, rows):
     if not rows:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     header = not path.exists() or path.stat().st_size == 0
+    if not header:
+        _migrate_header(path, columns)
     with open(path, "a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
         if header:
@@ -220,6 +242,7 @@ class ShadowBook:
             "pnl_pct": round(w["pnl_pct"], 4), "profit": int(w["pnl_pct"] > 0),
             "mfe_pct": round(w["mfe_pct"], 4), "mae_pct": round(w["mae_pct"], 4),
             "labelled_at": now.isoformat(timespec="seconds"), "source": sig.get("source", "live"),
+            "exit_stop": round(w["stop"], 4),            # the stop in force when it closed
         }
         self.closed[sid] = row
         self.live.pop(sid, None)
@@ -238,15 +261,20 @@ class ShadowBook:
                 "baseline_go": str(s.get("baseline_go")) in ("True", "true", "1"),
                 "entry": entry, "stop": _num(s.get("stop")), "target": _num(s.get("target")),
                 "status": "open", "status_label": STATUS_LABEL["open"],
-                "price": None, "pnl_pct": None, "trail_stop": _num(s.get("stop")),
+                "price": None, "pnl_pct": None,
+                # initial_stop: at entry; trail_stop: the stop in force now (open) or at the
+                # exit (closed) -- the same `stop` exits.simulate carries through the walk.
+                "initial_stop": _num(s.get("stop")), "trail_stop": _num(s.get("stop")), "exit_stop": None,
                 "best_pct": None, "worst_pct": None, "exit_time": None,
                 "model_version": s.get("model_version"),
             }
             if o is not None:
+                stop_at_exit = _exit_stop(o)
                 row.update(status=o["status"], status_label=STATUS_LABEL[o["status"]],
                            price=_num(o["exit_price"]), pnl_pct=_num(o["pnl_pct"]),
                            best_pct=_num(o["mfe_pct"]), worst_pct=_num(o["mae_pct"]),
-                           exit_time=str(o["exit_time"])[:5], trail_stop=None)
+                           exit_time=str(o["exit_time"])[:5], trail_stop=stop_at_exit,
+                           exit_stop=stop_at_exit)
             elif w is not None:
                 row.update(price=w["price"], pnl_pct=w["pnl_pct"], trail_stop=w["stop"],
                            best_pct=w["mfe_pct"], worst_pct=w["mae_pct"])
@@ -260,6 +288,16 @@ class ShadowBook:
             "as_of": now.isoformat(timespec="seconds"),
             "rows": self.tracker_rows(),
         })
+
+
+def _exit_stop(outcome):
+    """The stop in force at the exit. Labels written before exit_stop was recorded
+    fall back to the exit price for stop and trail exits, which exits.simulate fills
+    exactly at the stop; for other exits it is unknown (None)."""
+    v = _num(outcome.get("exit_stop"))
+    if v is None and outcome.get("exit_reason") in ("STOP", "TRAIL"):
+        v = _num(outcome.get("exit_price"))
+    return v
 
 
 def _num(x):
