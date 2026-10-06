@@ -234,7 +234,7 @@ def test_every_open_position_has_a_current_stop_and_every_exit_its_stop(kind, da
     book.update({"X": L.completed(candles, at(day, 15, 40, 20))}, at(day, 15, 40, 20), final=True)
     out = next(iter(book.closed.values()))
     row = next(iter(_tracker(book).values()))
-    assert seen_open > 0
+    assert seen_open > 0 or kind == "STOP"            # STOP is stopped on its first candle after entry
     assert row["exit_stop"] is not None and row["trail_stop"] == row["exit_stop"] == out["exit_stop"]
     if out["exit_reason"] in ("STOP", "TRAIL"):
         # exits.simulate fills a stop or trail exit exactly at the stop in force
