@@ -27,7 +27,7 @@ def login(c, pw=PW):
 
 
 def test_pages_redirect_to_the_login_page_not_a_basic_auth_popup(client):
-    for path in ("/", "/live", "/historical", "/performance", "/about", "/static/style.css"):
+    for path in ("/", "/live", "/historical", "/performance", "/about"):
         r = client.get(path)
         assert r.status_code == 302 and "/login" in r.headers["Location"], path
         assert "WWW-Authenticate" not in r.headers
@@ -100,3 +100,9 @@ def test_deployed_mode_always_marks_the_cookie_secure(client, monkeypatch):
     monkeypatch.setattr(webapp, "REQUIRE_LOGIN", True)
     r = webapp.app.test_client().post("/api/login", json={"password": PW})   # plain http, no header
     assert "Secure" in r.headers["Set-Cookie"]
+
+
+def test_static_files_are_public_but_carry_no_data(client):
+    """CSS/JS/figures are served without a session (the guest view needs them); data never is."""
+    assert client.get("/static/style.css").status_code == 200
+    assert client.get("/api/tracker").status_code == 401

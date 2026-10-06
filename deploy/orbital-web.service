@@ -13,6 +13,8 @@ User=ubuntu
 WorkingDirectory=/home/ubuntu/orbital
 Environment=TZ=Asia/Kolkata
 Environment=ORBITAL_DASHBOARD_PASSWORD_FILE=/home/ubuntu/.orbital_web_password
+# read-only demo link /guest?k=<key>; `python guest.py rotate` writes it (no restart needed)
+Environment=ORBITAL_GUEST_KEY_FILE=/home/ubuntu/.orbital_guest_key
 # refuse to start without a password rather than serve the dashboard open
 Environment=ORBITAL_REQUIRE_LOGIN=1
 # trust Caddy's X-Forwarded-Proto (waitress drops untrusted proxy headers by default)

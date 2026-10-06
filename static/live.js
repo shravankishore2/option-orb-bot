@@ -112,9 +112,10 @@
   async function refresh() {
     if (document.hidden) return;
     try {
-      const r = await fetch(location.pathname + "?" + new URLSearchParams({
-        time: new URLSearchParams(location.search).get("time") || "15:15", fragment: "1" }),
-        { credentials: "same-origin", headers: { Accept: "text/html" } });
+      const q = new URLSearchParams(location.search);          // keeps time and, for guests, the key
+      q.set("fragment", "1");
+      const r = await fetch(location.pathname + "?" + q, { credentials: "same-origin", headers: { Accept: "text/html" } });
+      if (r.status === 404 && document.body.dataset.guest) { location.reload(); return; }   // key rotated
       if (r.status === 401 || r.redirected) { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search); return; }
       if (!r.ok) return;
       const doc = new DOMParser().parseFromString(await r.text(), "text/html");

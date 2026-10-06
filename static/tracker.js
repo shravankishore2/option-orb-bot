@@ -5,6 +5,7 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   let snap = JSON.parse($("trk-data").textContent || "{}");
+  const GUEST = document.body.dataset.guest === "1";      // read-only demo: % only, polled
   let tab = "all";
   try { tab = sessionStorage.getItem("orbital-trk-tab") || "all"; } catch (e) {}
 
@@ -26,12 +27,13 @@
             <i style="width:${Math.min(100, r.score * 100).toFixed(0)}%"></i><b style="left:${(r.threshold * 100).toFixed(0)}%"></b>
           </div><small>${r.score.toFixed(3)}</small></td>
       <td><span class="decision ${r.go ? "go" : "skip"}">${r.go ? "GO" : "SKIP"}</span>${r.decision === "STALE" ? ' <span class="few" title="first seen late; not sent">stale</span>' : ""}${!r.go ? '<small class="paper-tag" title="paper/shadow position: the model did not take it">tracked, not taken</small>' : ""}</td>
+      ${GUEST ? `${pct(r.pnl_pct)}${pct(r.initial_stop_pct)}${pct(r.stop_pct)}` : `
       <td class="num">${money(r.entry)}</td>
       <td class="num">${money(r.price)}</td>
       ${pct(r.pnl_pct)}
       <td class="num">${money(r.stop)}</td>
       <td class="num" title="${closed ? "stop in force at the exit" : "stop in force now"}">${money(r.trail_stop)}</td>
-      <td class="num">${money(r.target)}</td>
+      <td class="num">${money(r.target)}</td>`}
       ${pct(r.best_pct)}
       ${pct(r.worst_pct)}
       <td><span class="trk-status s-${esc(r.status)}">${esc(r.status_label)}</span></td>
@@ -112,6 +114,16 @@
     };
   }
 
+  async function poll() {                                  // guests: plain JSON every 30 s
+    if (document.hidden) return;
+    const r = await fetch("/guest/api/tracker?" + new URLSearchParams({ k: new URLSearchParams(location.search).get("k") || "" }))
+      .catch(() => null);
+    if (!r || !r.ok) { setConn("reconnecting"); return; }
+    const next = await r.json();
+    next.today = next.today || snap.today;
+    snap = next; setConn("live"); render();
+  }
+
   render();
-  connect();
+  if (GUEST) { setConn("live"); setInterval(poll, 30000); } else connect();
 })();

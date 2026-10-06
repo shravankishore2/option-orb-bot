@@ -1033,3 +1033,6 @@ th[aria-sort="descending"] .sort i::after { content: "↓"; opacity: 1; }
     .expand { width: 40px; height: 40px; }
     .detail-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* guest (read-only demo) */
+.banner.guest-banner { border-color: var(--blue); background: rgba(92, 200, 255, 0.10); color: var(--text); }

@@ -4,9 +4,10 @@
     <meta charset="UTF-8">
     <title>ORBITAL · {{ active_tab|capitalize }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body{% if g.get('guest') %} data-guest="1"{% endif %}>
 <div class="app-shell">
 
     <!-- HEADER -->
@@ -26,13 +27,17 @@
             </div>
             <div class="meta-card"><span>AS OF</span><strong>{{ today }}</strong></div>
             <div class="meta-card"><span>UPDATED</span><strong>{{ updated_at }}</strong></div>
-            {% if login_enabled %}
+            {% if login_enabled and not g.get('guest') %}
             <form method="post" action="{{ url_for('logout') }}" class="logout-form">
                 <button class="logout-btn" type="submit">Log out</button>
             </form>
             {% endif %}
         </div>
     </header>
+
+    {% if g.get('guest') %}
+    <div class="banner guest-banner" role="note">{{ guest_banner }}</div>
+    {% endif %}
 
     {% if heartbeat_stale %}
     <div class="banner warn">
@@ -43,12 +48,12 @@
 
     <!-- NAV -->
     <nav class="tabs">
-        <a href="{{ url_for('live') }}" class="{% if active_tab == 'live' %}active{% endif %}">▲ Live Scanner</a>
-        <a href="{{ url_for('tracker') }}" class="{% if active_tab == 'tracker' %}active{% endif %}">◉ Tracker</a>
-        <a href="{{ url_for('scorecard') }}" class="{% if active_tab == 'scorecard' %}active{% endif %}">✓ Scorecard</a>
-        <a href="{{ url_for('historical') }}" class="{% if active_tab == 'historical' %}active{% endif %}">◷ Historical Signals</a>
-        <a href="{{ url_for('performance') }}" class="{% if active_tab == 'performance' %}active{% endif %}">▥ Performance</a>
-        <a href="{{ url_for('about') }}" class="{% if active_tab == 'about' %}active{% endif %}">ⓘ About</a>
+        <a href="{{ tab_url('live') }}" class="{% if active_tab == 'live' %}active{% endif %}">▲ Live Scanner</a>
+        <a href="{{ tab_url('tracker') }}" class="{% if active_tab == 'tracker' %}active{% endif %}">◉ Tracker</a>
+        <a href="{{ tab_url('scorecard') }}" class="{% if active_tab == 'scorecard' %}active{% endif %}">✓ Scorecard</a>
+        {% if not g.get('guest') %}<a href="{{ url_for('historical') }}" class="{% if active_tab == 'historical' %}active{% endif %}">◷ Historical Signals</a>{% endif %}
+        <a href="{{ tab_url('performance') }}" class="{% if active_tab == 'performance' %}active{% endif %}">▥ Performance</a>
+        {% if not g.get('guest') %}<a href="{{ url_for('about') }}" class="{% if active_tab == 'about' %}active{% endif %}">ⓘ About</a>{% endif %}
     </nav>
 
 
@@ -62,7 +67,7 @@
         <div class="filter-label" id="time-label">UP TO TIME</div>
         <div class="time-buttons" role="group" aria-labelledby="time-label">
             {% for t in time_filters %}
-            <a href="{{ url_for('live', time=t) }}" class="time-btn {% if selected_time == t %}active{% endif %}"
+            <a href="{{ tab_url('live', time=t) }}" class="time-btn {% if selected_time == t %}active{% endif %}"
                {% if selected_time == t %}aria-current="true"{% endif %}>{{ t }}</a>
             {% endfor %}
         </div>
@@ -128,8 +133,12 @@
             <table class="tracker-table">
                 <thead><tr>
                     <th>Ticker</th><th>Signal</th><th>Dir</th><th>Score</th><th>Model</th>
+                    {% if g.get('guest') %}
+                    <th class="num">% from entry</th><th class="num">Initial stop</th><th class="num">Stop now / at exit</th>
+                    {% else %}
                     <th class="num">Entry</th><th class="num">Current</th><th class="num">% from entry</th>
                     <th class="num">Initial stop</th><th class="num">Stop now / at exit</th><th class="num">Target</th>
+                    {% endif %}
                     <th class="num">Best</th><th class="num">Worst</th><th>Status</th><th>Exit</th>
                 </tr></thead>
                 <tbody id="trk-body"></tbody>
@@ -161,8 +170,8 @@
                    only completed outcomes count ({{ sc.labelled }} labelled, {{ sc.open }} still open).</p>
             </div>
             <div class="toggle">
-                <a href="{{ url_for('scorecard') }}" class="time-btn {% if sc.by == 'model_go' %}active{% endif %}">Live champion ({{ sc.versions.champion }})</a>
-                <a href="{{ url_for('scorecard', filter='baseline') }}" class="time-btn {% if sc.by == 'baseline_go' %}active{% endif %}">Frozen {{ sc.versions.baseline }} baseline</a>
+                <a href="{{ tab_url('scorecard') }}" class="time-btn {% if sc.by == 'model_go' %}active{% endif %}">Live champion ({{ sc.versions.champion }})</a>
+                <a href="{{ tab_url('scorecard', filter='baseline') }}" class="time-btn {% if sc.by == 'baseline_go' %}active{% endif %}">Frozen {{ sc.versions.baseline }} baseline</a>
             </div>
         </div>
 
@@ -413,7 +422,7 @@
 
         <div class="period-tabs">
             {% for key, label in view.periods %}
-            <a href="{{ url_for('performance', period=key) }}" class="time-btn {% if view.period == key %}active{% endif %}">{{ label }}</a>
+            <a href="{{ tab_url('performance', period=key) }}" class="time-btn {% if view.period == key %}active{% endif %}">{{ label }}</a>
             {% endfor %}
         </div>
 
@@ -468,11 +477,11 @@
         <h3 class="subhead">Paper test — the live bot replayed cycle by cycle ({{ view.paper_total }} total)</h3>
         <div class="table-wrap full">
             <table>
-                <thead><tr><th>Date</th><th>Time</th><th>Symbol</th><th>Dir</th><th>Entry</th><th>Score</th><th>P&amp;L</th><th>Exit</th></tr></thead>
+                <thead><tr><th>Date</th><th>Time</th><th>Symbol</th><th>Dir</th>{% if not g.get('guest') %}<th>Entry</th>{% endif %}<th>Score</th><th>P&amp;L</th><th>Exit</th></tr></thead>
                 <tbody>
                 {% for p in view.paper %}
                 <tr><td>{{ p.date }}</td><td>{{ p.time }}</td><td class="symbol">{{ p.symbol }}</td><td>{{ p.direction }}</td>
-                    <td>₹{{ p.entry_price }}</td><td>{{ "%.2f"|format(p.score) }}</td>
+                    {% if not g.get('guest') %}<td>₹{{ p.entry_price }}</td>{% endif %}<td>{{ "%.2f"|format(p.score) }}</td>
                     <td class="{% if p["pnl_%"] >= 0 %}pos{% else %}neg{% endif %}">{{ p.pnl }}</td><td>{{ p.exit_reason }}</td></tr>
                 {% endfor %}
                 </tbody>

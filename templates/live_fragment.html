@@ -2,6 +2,10 @@
     Live page and, both together (/live?fragment=1), every 30 s when the page refreshes itself; live.js then
     re-applies the filters, sort order and open detail rows. -#}
 {%- macro money(v) -%}{% if v %}₹{{ v }}{% else %}—{% endif %}{%- endmacro -%}
+{%- macro spct(v) -%}
+    {%- if v is not none -%}<span class="{{ 'pos' if v >= 0 else 'neg' }}">{{ "%+.2f"|format(v) }}%</span>{%- else -%}—{%- endif -%}
+{%- endmacro -%}
+{%- set guest = g.get('guest') -%}
 {%- macro signed(raw, text) -%}
     {%- if raw is not none and raw != "" -%}<span class="{{ 'pos' if raw >= 0 else 'neg' }}">{{ text }}</span>{%- else -%}—{%- endif -%}
 {%- endmacro -%}
@@ -80,11 +84,17 @@
             </td>
             <td data-label="Price · from entry">
                 <span class="big">{{ signed(s.diff_raw, s.diff) }}</span>
-                <small class="sub">{{ money(s.entry) }} → {{ money(s.current) }}</small>
+                {% if guest %}<small class="sub">{{ "at exit" if closed else "entry → now" }}</small>
+                {% else %}<small class="sub">{{ money(s.entry) }} → {{ money(s.current) }}</small>{% endif %}
             </td>
             <td data-label="Stop">
+                {% if guest %}
+                <span class="big num">{{ spct(s.stop_pct) }}</span>
+                <small class="sub">{% if closed %}at exit · {% endif %}initial {{ spct(s.initial_stop_pct) }}</small>
+                {% else %}
                 <span class="big num">{{ money(s.trail) }}</span>
                 <small class="sub">{% if closed %}at exit · {% endif %}initial {{ money(s.initial_stop) }}</small>
+                {% endif %}
             </td>
             <td data-label="Range of move">
                 {% if s.best_raw is not none and s.worst_raw is not none %}
@@ -110,12 +120,21 @@
         <tr class="sig-detail" id="{{ did }}" hidden>
             <td colspan="8">
                 <dl class="detail-grid">
+                    {% if guest %}
+                    <div><dt>Opening range width</dt><dd>{{ "%.2f"|format(s.range_pct) ~ "%" if s.range_pct is not none else "—" }}</dd></div>
+                    <div><dt>Entry beyond the range</dt><dd>{{ spct(s.breakout_pct) }}</dd></div>
+                    <div><dt>Entry vs previous close</dt><dd>{{ spct(s.prev_close_pct) }}</dd></div>
+                    <div><dt>Entry</dt><dd>at {{ s.time[:5] }}</dd></div>
+                    <div><dt>Initial stop vs entry</dt><dd>{{ spct(s.initial_stop_pct) }}</dd></div>
+                    <div><dt>{{ "Stop at exit" if closed else "Current stop" }} vs entry</dt><dd>{{ spct(s.stop_pct) }}{% if s.stop_moved %} <small>(trailed)</small>{% endif %}</dd></div>
+                    {% else %}
                     <div><dt>Opening range high (ORH)</dt><dd>{{ money(s.orh) }}</dd></div>
                     <div><dt>Opening range low (ORL)</dt><dd>{{ money(s.orl) }}</dd></div>
                     <div><dt>Previous close</dt><dd>{{ money(s.prev_close) }}</dd></div>
                     <div><dt>Entry</dt><dd>{{ money(s.entry) }} at {{ s.time[:5] }}</dd></div>
                     <div><dt>Initial stop</dt><dd>{{ money(s.initial_stop) }}</dd></div>
                     <div><dt>{{ "Stop at exit" if closed else "Current stop" }}</dt><dd>{{ money(s.trail) }}{% if s.stop_moved %} <small>(trailed)</small>{% endif %}</dd></div>
+                    {% endif %}
                     <div><dt>Best / worst so far</dt><dd>{{ signed(s.best_raw, s.best) }} / {{ signed(s.worst_raw, s.worst) }}</dd></div>
                     <div><dt>Score vs GO threshold</dt><dd>{% if s.score_raw is not none %}{{ "%.3f"|format(s.score_raw) }} vs {{ "%.3f"|format(s.threshold) if s.threshold is not none else "—" }}{% else %}—{% endif %}</dd></div>
                     <div><dt>Status</dt><dd>{{ s.status_label or "—" }}{% if s.exit_time %} at {{ s.exit_time }}{% endif %}</dd></div>

@@ -20,11 +20,14 @@ import hashlib
 import json
 import os
 import re
+import hmac
 import threading
 import time
+from collections import deque
+from pathlib import Path
 
 import pandas as pd
-from flask import (Flask, Response, jsonify, render_template, request, redirect,
+from flask import (Flask, Response, abort, g, jsonify, render_template, request, redirect,
                    stream_with_context, url_for)
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -51,7 +54,8 @@ if not PASSWORD and REQUIRE_LOGIN:
 _secret = os.getenv("ORBITAL_DASHBOARD_SECRET")
 SIGNER = auth.SessionSigner(_secret.encode() if _secret else None, ttl_s=SESSION_HOURS * 3600)
 CHECKER = auth.PasswordCheck(PASSWORD) if PASSWORD else None
-OPEN_ENDPOINTS = {"login_page", "login_form", "api_login", "logout", "api_logout", "healthz"}
+OPEN_ENDPOINTS = {"login_page", "login_form", "api_login", "logout", "api_logout", "healthz",
+                  "static", "robots"}          # static: CSS/JS/figures only, no data
 
 
 def logged_in():
@@ -66,6 +70,8 @@ def safe_next(target):
 
 @app.before_request
 def require_login():
+    if request.endpoint in GUEST_ENDPOINTS:
+        return guest_gate()
     if request.endpoint in OPEN_ENDPOINTS or logged_in():
         return None
     if request.path.startswith("/api/"):          # the live stream asks, like QuantRadar's client
@@ -79,6 +85,8 @@ def security_headers(resp):
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "no-referrer"
     resp.headers.setdefault("Cache-Control", "no-store")
+    if request.endpoint in GUEST_ENDPOINTS or request.endpoint == "robots":
+        resp.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
     return resp
 
 
@@ -381,6 +389,8 @@ def live_rows(day, cutoff, show):
         initial = num(t.get("initial_stop")) if t.get("initial_stop") is not None else num(r.get("stop"))
         rows.append({
             "id": shadow.signal_id(r.get("date"), r["symbol"], r["direction"]),
+            "entry_raw": e, "initial_raw": initial, "orh_raw": num(r.get("ORH")), "orl_raw": num(r.get("ORL")),
+            "prev_close_raw": num(r.get("prev_close")),
             "time": str(r["time"]), "symbol": str(r["symbol"]).upper(), "direction": direction,
             "decision": str(r["decision"]),
             "entry": price(e), "current": price(c), "diff": pct(diff), "diff_raw": diff, "pnl_pct": diff,
@@ -552,12 +562,18 @@ def render(tab, **kw):
         "dashboard.html", active_tab=tab, today=now.date().isoformat(),
         updated_at=now.strftime("%H:%M:%S"), status=status, status_css=status_css,
         heartbeat=beat.strftime("%H:%M") if beat else None, heartbeat_stale=stale,
-        model=model_info(), time_filters=TIME_FILTERS, login_enabled=CHECKER is not None, **kw)
+        model=model_info(), time_filters=TIME_FILTERS, login_enabled=CHECKER is not None,
+        guest_banner=GUEST_BANNER, **kw)
 
 
 @app.route("/")
 def index():
     return redirect(url_for("live"))
+
+
+def _signals(rows):
+    return [{k: (None if isinstance(v, float) and v != v else v) for k, v in r.items()}
+            for r in (rows.to_dict("records") if not rows.empty else [])]       # NaN -> None
 
 
 @app.route("/live")
@@ -571,8 +587,7 @@ def live():
 
     rows, legacy = live_rows(day, cutoff, "all")
     everything, _ = live_rows(day, None, "all")
-    signals = [{k: (None if isinstance(v, float) and v != v else v) for k, v in r.items()}
-               for r in (rows.to_dict("records") if not rows.empty else [])]       # NaN -> None
+    signals = _signals(rows)
     kw = dict(selected_time=cutoff, legacy=legacy, summary=signal_summary(records(everything)),
               selective_note=SELECTIVE_NOTE, signals=signals, scale=range_scale(signals))
     if request.args.get("fragment") == "1":
@@ -738,6 +753,166 @@ def about():
         ("Retraining", f"{C.RETRAIN}, walk-forward"),
     ]
     return render("about", cfg=cfg, frozen=frozen, sha=sha)
+
+
+# ------------------------------------------------------------------ guest (read-only demo)
+# /guest?k=<key>: the live scanner, tracker, scorecard and performance tabs, read-only, with
+# every price replaced by a % move. The key lives only on the VM (GUEST_KEY_FILE, written by
+# `python guest.py rotate`) and is re-read when the file changes, so rotating needs no
+# restart; no key file = no guest view. Guests get no session, so every other page and the
+# logout/login endpoints stay exactly as they were. Rows are built from a whitelist of %
+# fields: a template slip can show "—", never a price.
+GUEST_KEY_FILE = Path(os.getenv("ORBITAL_GUEST_KEY_FILE", "~/.orbital_guest_key")).expanduser()
+GUEST_ENDPOINTS = {"guest_live", "guest_tracker", "guest_scorecard", "guest_performance", "guest_api_tracker"}
+GUEST_BANNER = "Read-only demo. Signals only, no orders. Prices shown as %."
+_guest_key_cache = {"stat": None, "key": None}
+
+
+class RateWindow:
+    """At most `n` hits per `per` seconds for each client (sliding window)."""
+
+    def __init__(self, n, per, clock=time.monotonic):
+        self.n, self.per, self.clock = n, per, clock
+        self.hits, self.lock = {}, threading.Lock()
+
+    def allow(self, who):
+        now = self.clock()
+        with self.lock:
+            q = self.hits.setdefault(who, deque())
+            while q and now - q[0] >= self.per:
+                q.popleft()
+            if len(q) >= self.n:
+                return False, self.per - (now - q[0])
+            q.append(now)
+            if len(self.hits) > 5000:                        # forget idle clients
+                for k in [k for k, v in self.hits.items() if not v]:
+                    del self.hits[k]
+            return True, 0.0
+
+
+GUEST_RATE = RateWindow(120, 60)          # page + 30 s refreshes, with room for clicking around
+GUEST_BAD_KEY = RateWindow(20, 600)       # wrong keys: guessing is pointless (32 random bytes) but capped
+
+
+def guest_key():
+    try:
+        st = GUEST_KEY_FILE.stat()
+    except OSError:
+        return None
+    stamp = (st.st_mtime_ns, st.st_size)
+    if _guest_key_cache["stat"] != stamp:
+        _guest_key_cache.update(stat=stamp, key=GUEST_KEY_FILE.read_text().strip() or None)
+    return _guest_key_cache["key"]
+
+
+def guest_gate():
+    who = request.remote_addr or "?"          # the real client: ProxyFix trusts Caddy's X-Forwarded-For
+    ok, wait = GUEST_RATE.allow(who)
+    if not ok:
+        return Response("Too many requests.\n", 429, {"Retry-After": str(int(wait) + 1)}, mimetype="text/plain")
+    key, given = guest_key(), request.args.get("k", "")
+    if key and given and hmac.compare_digest(given.encode(), key.encode()):
+        g.guest, g.guest_key = True, key
+        return None
+    ok, wait = GUEST_BAD_KEY.allow(who)
+    if not ok:
+        return Response("Too many requests.\n", 429, {"Retry-After": str(int(wait) + 1)}, mimetype="text/plain")
+    abort(404)                                # don't confirm the page exists
+
+
+@app.template_global()
+def tab_url(tab, **kw):
+    """A tab's URL: the guest copy (with the key) for guests, the normal page otherwise."""
+    if getattr(g, "guest", False):
+        return url_for("guest_" + tab, k=g.guest_key, **kw)
+    return url_for(tab, **kw)
+
+
+def _pct(a, b, sign=1.0):
+    return None if a is None or b in (None, 0) else sign * (a - b) / b * 100
+
+
+def guest_signal(s):
+    """One live row with every price replaced by a % move (whitelist)."""
+    sign = 1.0 if s["direction"] == "BUY" else -1.0
+    e, orh, orl = s.get("entry_raw"), s.get("orh_raw"), s.get("orl_raw")
+    level = orh if sign > 0 else orl
+    keep = ("id", "time", "symbol", "direction", "decision", "score", "score_raw", "threshold", "score_pct",
+            "thr_pct", "diff", "diff_raw", "best", "best_raw", "worst", "worst_raw", "status", "status_short",
+            "status_label", "exit_time", "decided_at", "age_min", "stop_moved")
+    out = {k: s.get(k) for k in keep}
+    out.update(
+        stop_pct=_pct(s.get("trail_raw"), e, sign),            # stop now / at exit vs entry, in the trade's favour
+        initial_stop_pct=_pct(s.get("initial_raw"), e, sign),
+        range_pct=_pct(orh, orl),                                # opening-range width
+        breakout_pct=_pct(e, level, sign),                       # entry beyond the range edge
+        prev_close_pct=_pct(e, s.get("prev_close_raw")),         # entry vs yesterday's close
+    )
+    return out
+
+
+GUEST_TRACKER_FIELDS = ("id", "symbol", "time", "direction", "score", "threshold", "go", "decision",
+                        "baseline_go", "status", "status_label", "pnl_pct", "best_pct", "worst_pct",
+                        "exit_time", "model_version")
+
+
+def guest_tracker_snapshot():
+    snap = tracker_snapshot()
+    rows = []
+    for r in snap["rows"]:
+        sign = 1.0 if r.get("direction") == "BUY" else -1.0
+        rows.append({**{k: r.get(k) for k in GUEST_TRACKER_FIELDS},
+                     "stop_pct": _pct(r.get("trail_stop"), r.get("entry"), sign),
+                     "initial_stop_pct": _pct(r.get("initial_stop", r.get("stop")), r.get("entry"), sign)})
+    return {"version": snap.get("version"), "day": snap.get("day"), "as_of": snap.get("as_of"),
+            "today": snap["today"], "summary": snap["summary"], "rows": rows, "guest": True}
+
+
+@app.get("/guest")
+def guest_live():
+    cutoff = request.args.get("time", "15:15")
+    if cutoff not in TIME_FILTERS:
+        cutoff = "15:15"
+    day = now_ist().date().isoformat()
+    rows, _ = live_rows(day, cutoff, "all")
+    everything, _ = live_rows(day, None, "all")
+    signals = [guest_signal(s) for s in _signals(rows)]
+    kw = dict(selected_time=cutoff, legacy=False, summary=signal_summary(records(everything)),
+              selective_note=SELECTIVE_NOTE, signals=signals, scale=range_scale(signals))
+    if request.args.get("fragment") == "1":
+        return render_template("live_fragment.html", model=model_info(), **kw)
+    return render("live", **kw)
+
+
+@app.get("/guest/tracker")
+def guest_tracker():
+    return render("tracker", snapshot=guest_tracker_snapshot(), selective_note=SELECTIVE_NOTE)
+
+
+@app.get("/guest/api/tracker")
+def guest_api_tracker():
+    return guest_tracker_snapshot()
+
+
+@app.get("/guest/scorecard")
+def guest_scorecard():
+    by = "baseline_go" if request.args.get("filter") == "baseline" else "model_go"
+    return render("scorecard", sc=scorecard_view(by))
+
+
+@app.get("/guest/performance")
+def guest_performance():
+    view = performance_view(request.args.get("period", "clean_backward"))
+    if view:
+        view["paper"] = [{k: v for k, v in p.items() if k in ("date", "time", "symbol", "direction", "score",
+                                                              "pnl_%", "pnl", "exit_reason")}
+                         for p in view.get("paper") or []]
+    return render("performance", view=view)
+
+
+@app.get("/robots.txt")
+def robots():
+    return Response("User-agent: *\nDisallow: /\n", mimetype="text/plain")
 
 
 if __name__ == "__main__":
