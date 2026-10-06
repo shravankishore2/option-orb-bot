@@ -80,6 +80,22 @@ P&L per trade, gross; the net columns subtract a flat round trip. Worst month = 
 
 **Outcome:** no v3 variant beats v2 out-of-sample by the protocol rule; nothing is shadow-tracked.
 
+## Decisions (owner, 2026-10-07)
+
+- **Keep the ±1.8%-from-previous-close condition** and **breakout entries**. No retest entries.
+- The one consistent finding (the stock-ID proxies and `prev_close_vs_orb` were dropped in all ten
+  selections) goes forward as **v2.1**, under its own protocol (`docs/V2_1_PROTOCOL.md` on `main`),
+  shadow-tracked only.
+
+## Lesson for future protocols
+
+**Cap the total loss the parsimony rule can accumulate, not just each step.** Here a drop was accepted
+whenever it cost less than one standard error, so small losses added up: in 2025 the chosen breakout
+set ended 0.045% per trade below the full set, more than one SE in total. A future protocol should
+stop dropping once the **cumulative** loss against the starting set reaches one standard error (or
+choose the smallest set within one SE of the best, the "one-SE rule"), and report the cumulative loss
+for every selection.
+
 ## Reading the result
 
 - **No v3 variant beats v2 by the pre-set rule**, so nothing is shadow-tracked. The best-looking one, the v3
