@@ -751,7 +751,8 @@ def scorecard_view(by):
             "comparisons": list(reversed(registry.comparisons()))[:12],
             "drift": read_json(str(shadow.LIVE_DIR / "drift.json")),
             "skips": skip_report(df, signals),
-            "variants": variant_status.scorecard(), "variant_status": variant_status.history()[-4:][::-1]}
+            "variants": variant_status.scorecard(), "variant_status": variant_status.history()[-4:][::-1],
+            "late_locked": variant_status.locked_late_verdict()}
 
 
 @app.route("/scorecard")

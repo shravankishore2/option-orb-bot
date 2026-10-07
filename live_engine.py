@@ -383,7 +383,7 @@ class LiveEngine:
         base_scores = (score_frame(self.baseline.model, self.baseline.features, frame)
                        if self.baseline is not None else [None] * len(rows))
         feature_rows = frame.to_dict("records")
-        variant_scores = self._variant_scores(frame, base_scores)
+        variant_scores = self._variant_scores(frame, base_scores, scores)
 
         decisions = []
         for i, (sig, sc, bsc, fv) in enumerate(zip(meta, scores, base_scores, feature_rows)):
@@ -420,20 +420,32 @@ class LiveEngine:
                 "baseline_threshold": round(self.baseline.threshold, 4) if self.baseline is not None else None,
                 "baseline_go": bool(bsc >= self.baseline.threshold) if bsc is not None else None,
                 "features": {k: (None if pd.isna(v) else float(v)) for k, v in fv.items()},
-                "variants": {v["name"]: {"version": v["version"], "threshold": round(v["threshold"], 4),
-                                         "score": round(float(s[i]), 4), "go": bool(s[i] >= v["threshold"])}
+                "variants": {v["name"]: self._variant_decision(v, s[i], sig["time"])
                              for v in self.variants if (s := variant_scores.get(v["name"])) is not None},
             })
 
         return decisions
 
-    def _variant_scores(self, frame, base_scores):
+    def _variant_decision(self, v, score, entry_time):
+        """One shadow variant's decision on one signal. threshold None = the champion's;
+        `before` (a time) drops entries at or after it (docs/LATE_CUT_PROTOCOL.md)."""
+        thr = self.threshold if v.get("threshold") is None else v["threshold"]
+        go = bool(score >= thr)
+        if v.get("before") is not None:
+            go = go and dt.datetime.strptime(entry_time, "%H:%M:%S").time() < v["before"]
+        version = v.get("version") or f"{self.version}@{thr:.4f}<{v['before'].strftime('%H:%M')}"
+        return {"version": version, "threshold": round(thr, 4), "score": round(float(score), 4), "go": go}
+
+    def _variant_scores(self, frame, base_scores, scores=None):
         """{variant name: scores} for the shadow variants. A variant that can't be scored
         is skipped; it can never affect the champion's decisions."""
         out = {}
         for v in self.variants:
             try:
-                if v.get("model") is not None:
+                if isinstance(v.get("model"), str) and v["model"] == "champion":
+                    if scores is not None:
+                        out[v["name"]] = list(scores)
+                elif v.get("model") is not None:
                     out[v["name"]] = score_frame(v["model"].model, v["model"].features, frame)
                 elif base_scores is not None and base_scores[0] is not None:
                     out[v["name"]] = list(base_scores)

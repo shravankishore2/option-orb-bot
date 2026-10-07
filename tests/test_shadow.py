@@ -287,3 +287,14 @@ def test_variant_decisions_are_logged_beside_each_signal(day, book):
     v = shadow._read(book.variants_file)
     assert len(v) == 2 and set(v["variant"]) == {"v2.1", "v2@0.54"} and v["go"].astype(str).eq("True").all()
     assert "variants" not in shadow._read(book.signals_file).columns
+
+
+@pytest.mark.parametrize("entry,go,late", [("14:59:00", True, False), ("15:00:00", True, True),
+                                            ("15:10:00", True, True), ("15:10:00", False, False)])
+def test_the_tracker_flags_champion_go_trades_in_the_late_slice(day, book, entry, go, late):
+    d = {"date": day.isoformat(), "time": entry, "symbol": "X", "direction": "BUY", "entry_price": 101.0,
+         "ORH": 100.5, "ORL": 99.5, "prev_close": 99.0, "score": 0.7 if go else 0.3, "threshold": 0.644,
+         "decision": "GO" if go else "SKIP"}
+    book.record([d], at(day, 15, 10, 20))
+    row = book.tracker_rows()[0]
+    assert row["go"] is go and row["late_slice"] is late

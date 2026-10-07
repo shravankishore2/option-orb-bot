@@ -306,6 +306,7 @@ def test_scorecard_shows_the_champion_and_the_shadow_variants(open_client, files
     conds = dict((i, s) for i, _, s in v["conditions"])
     assert conds == {1: "not yet", 2: "not met", 3: "not met", 4: "met", 5: "not yet"}
     assert "(6/50, 3/15)" in html and "the step-5 sweep agrees" in html
+    assert "Late slice: champion GO entries at or after 15:00" in html and "(0/50, 0/15)" in html
 
     # the Friday status: a dated line in the JSON history, on the scorecard and in the doc
     doc = files / "THRESHOLD_RESULTS.md"

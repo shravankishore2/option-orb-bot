@@ -304,6 +304,34 @@
             {% endfor %}
         </ul>
         {% endif %}
+        {% set lc = vs.late if vs else none %}
+        {% if lc %}
+        <h3 class="sub">Late slice: champion GO entries at or after 15:00 (live, paper)</h3>
+        <div class="table-wrap full">
+            <table>
+                <thead><tr><th>Late slice</th><th class="num">Trades</th><th class="num">Days</th><th class="num">Hit</th>
+                    <th class="num">Mean</th><th class="num">after 0.05% (95% CI)</th><th class="num">after 0.10% (95% CI)</th>
+                    <th class="num">Worst day</th></tr></thead>
+                <tbody>
+                <tr><td>v2-late-cut drops these</td><td class="num">{{ lc.n }}</td><td class="num">{{ lc.days }}</td>
+                    <td class="num">{% if lc.hit is not none %}{{ "%.0f"|format(lc.hit) }}%{% else %}—{% endif %}</td>
+                    <td class="num">{{ avg(lc.mean[0.0]) }}</td>
+                    {% for c in [0.05, 0.1] %}<td class="num">{{ avg(lc.mean[c]) }}{% if lc.ci[c][0] is not none %} ({{ "%+.3f"|format(lc.ci[c][0]) }} to {{ "%+.3f"|format(lc.ci[c][1]) }}){% endif %}</td>{% endfor %}
+                    <td class="num">{% if lc.worst_day is not none %}{{ avg(lc.worst_day) }}{% else %}—{% endif %}</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="footnote">Live sessions from {{ lc.start }} ({{ lc.sessions }} so far). Total after 0.05%: v2-late-cut
+            {{ "%+.2f"|format(lc.total[0.05].variant) }} vs champion {{ "%+.2f"|format(lc.total[0.05].champion) }};
+            after 0.10%: {{ "%+.2f"|format(lc.total[0.1].variant) }} vs {{ "%+.2f"|format(lc.total[0.1].champion) }}.
+            The test is on the late slice itself, not mean-vs-champion (docs/LATE_CUT_PROTOCOL.md): the cut is supported
+            only if the whole 95% CI after 0.05% is below zero, read on the first Friday the floor is met.
+            {% if not lc.consistent %}<strong>Check: some late-slice trades are timed before 15:00.</strong>{% endif %}</p>
+        <ul class="footnote cond-list">
+            <li><strong>v2-late-cut</strong>: {% for i, text, state in lc.conditions %}({{ i }}) {{ text }}: <span class="cond-{{ state|replace(' ', '-') }}">{{ state }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</li>
+            <li>Verdict: {% if sc.late_locked %}<strong>{{ sc.late_locked.verdict }}</strong> (locked {{ sc.late_locked.date }}){% else %}{{ lc.verdict }}{% endif %}</li>
+        </ul>
+        {% endif %}
         {% if sc.variant_status %}
         <h4 class="sub">Weekly status (Fridays after the close)</h4>
         <ul class="footnote cond-list">

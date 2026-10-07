@@ -40,6 +40,7 @@ import numpy as np
 import pandas as pd
 
 import exits
+import registry
 import strategy_config as C
 from features import FEATURES as CONTEXT_FEATURES, GEOMETRY
 
@@ -259,6 +260,8 @@ class ShadowBook:
                    "entry": float(s["entry_price"]), "stop": _num(s.get("stop")), "target": _num(s.get("target")),
                    "model_version": s.get("model_version"), "rule": exits.CURRENT_RULE,
                    **_position(s, self.closed.get(sid), self.live.get(sid))}
+            # a champion GO entered at or after 15:00 (docs/LATE_CUT_PROTOCOL.md)
+            row["late_slice"] = bool(row["go"] and registry.in_late_slice(s["time"]))
             out.append(row)
         return out
 

@@ -244,6 +244,43 @@ def test_registry_ships_v2_1_and_the_054_threshold_variant():
     assert vs["v2@0.54"]["model"] is None and vs["v2@0.54"]["threshold"] == 0.54
 
 
+# --- the late-cut variant (docs/LATE_CUT_PROTOCOL.md) ----------------------------------------
+
+@pytest.mark.parametrize("entry,late", [("14:59:00", False), ("15:00:00", True), ("15:10:00", True)])
+def test_the_late_slice_flag_at_1459_1500_and_1510(setup, entry, late):
+    import registry
+    source, feats = setup
+    eng = L.LiveEngine(source, FakeModel(0.9), feats, 0.644, ["X"], {}, version="v2",
+                       variants=[v for v in registry.shadow_variants() if v["name"] == registry.LATE_CUT])
+    v = next(v for v in eng.variants if v["name"] == registry.LATE_CUT)
+    assert registry.in_late_slice(entry) is late and registry.in_late_slice(entry[:5]) is late
+    # a champion GO: the variant keeps it only before 15:00
+    d = eng._variant_decision(v, 0.9, entry)
+    assert d == {"version": "v2@0.6440<15:00", "threshold": 0.644, "score": 0.9, "go": not late}
+    # a champion SKIP is never a variant GO, early or late
+    assert eng._variant_decision(v, 0.5, entry)["go"] is False
+
+
+def test_the_late_cut_variant_scores_with_the_champion_and_changes_nothing(setup, day):
+    import registry
+    source, feats = setup
+    variants = [v for v in registry.shadow_variants() if v["name"] == registry.LATE_CUT]
+    plain = L.LiveEngine(source, FakeModel(0.9), feats, 0.644, ["X"], {}).cycle(at(day, 10, 20, 20))
+    with_v = L.LiveEngine(source, FakeModel(0.9), feats, 0.644, ["X"], {}, variants=variants).cycle(at(day, 10, 20, 20))
+    assert [d["decision"] for d in with_v] == [d["decision"] for d in plain] == ["GO"]
+    v = with_v[0]["variants"][registry.LATE_CUT]
+    assert v["score"] == with_v[0]["score"] and v["threshold"] == 0.644
+    assert v["go"] is (with_v[0]["time"] < "15:00:00")                  # a 10:xx entry: kept
+
+
+def test_registry_ships_the_late_cut_variant_fixed_at_1500():
+    import registry
+    vs = {v["name"]: v for v in registry.shadow_variants()}
+    lc = vs[registry.LATE_CUT]
+    assert lc["model"] == "champion" and lc["threshold"] is None and lc["before"] == dt.time(15, 0)
+    assert registry.LATE_CUT_START == "2026-10-08" and set(vs) == {"v2.1", "v2@0.54", registry.LATE_CUT}
+
+
 # --- the previous-session snapshot: Dhan's 15:40 quote close isn't final ---------------------
 
 def test_stale_close_share():

@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import registry
 import shadow
 
 RULE = {"min_trades": 50, "min_days": 15, "cost": 0.05}       # docs/THRESHOLD_PROTOCOL.md, step 7
@@ -29,6 +30,8 @@ COST_LEVELS = (0.0, 0.05, 0.10)
 # docs/THRESHOLD_RESULTS.md (2026-10-07): 0.54 beats 0.644 on combined total, with and
 # without the best month.
 SWEEP_AGREES = {"v2@0.54": True}
+# docs/LATE_CUT_PROTOCOL.md: the late slice is judged on its own, not against the champion
+LATE_RULE = {"min_trades": 50, "min_days": 15, "cost": 0.05}
 DOC = Path(__file__).resolve().parent / "docs" / "THRESHOLD_RESULTS.md"
 START, END = "<!-- variant-status:start -->", "<!-- variant-status:end -->"
 
@@ -75,13 +78,14 @@ def scorecard(until=None):
     if v.empty or s.empty:
         return None
     v = v[v["source"] == "live"]
+    s = s[s["source"] == "live"].drop_duplicates("signal_id")
     if until:
-        v = v[v["date"] <= until]
-    start = v["date"].min() if not v.empty else None
-    s = s[(s["source"] == "live") & (s["date"] >= start)].drop_duplicates("signal_id")
-    if until:
-        s = s[s["date"] <= until]
+        v, s = v[v["date"] <= until], s[s["date"] <= until]
     out = o.drop_duplicates("signal_id")[["signal_id", "pnl_pct"]] if not o.empty else pd.DataFrame(columns=["signal_id", "pnl_pct"])
+    late = late_card(v[v["variant"] == registry.LATE_CUT], s, out)
+    v = v[v["variant"] != registry.LATE_CUT]          # judged by its own protocol, below
+    start = v["date"].min() if not v.empty else None
+    s = s[s["date"] >= start] if start else s.iloc[0:0]
     sets = {"champion": s.loc[s["model_go"].astype(str).isin(["True", "true", "1"]), ["signal_id", "date"]]}
     labels = {"champion": f"Champion ({s['model_version'].iloc[0] if len(s) else 'v2'} @ "
                           f"{float(s['threshold'].iloc[0]) if len(s) else 0.644:.3f})"}
@@ -112,7 +116,74 @@ def scorecard(until=None):
         if k != "champion":
             row["conditions"] = conditions(row)
         rows.append(row)
-    return {"start": start, "rows": rows, "sessions": int(s["date"].nunique()), "rule": RULE}
+    return {"start": start, "rows": rows, "sessions": int(s["date"].nunique()), "rule": RULE, "late": late}
+
+
+def _is_true(col):
+    return col.astype(str).isin(["True", "true", "1"])
+
+
+def late_card(lv, s, out):
+    """docs/LATE_CUT_PROTOCOL.md. The late slice = the champion's GO trades that the
+    v2-late-cut variant dropped (entry at or after 15:00), on live sessions from
+    registry.LATE_CUT_START. Primary test: the late slice's mean after 0.05%, with a 95%
+    day-block bootstrap CI; the cut is supported only if the whole CI is below zero."""
+    start = registry.LATE_CUT_START
+    lv = lv[lv["date"] >= start]
+    sig = s[(s["date"] >= start) & s["signal_id"].isin(lv["signal_id"])]
+    champ_go = sig[_is_true(sig["model_go"])][["signal_id", "date", "time"]]
+    kept_ids = set(lv.loc[_is_true(lv["go"]), "signal_id"])
+
+    def trades(x):
+        return x.merge(out, on="signal_id").assign(pnl=lambda d: pd.to_numeric(d["pnl_pct"], errors="coerce")) \
+                .dropna(subset=["pnl"])
+    late, kept, champ = (trades(champ_go[~champ_go["signal_id"].isin(kept_ids)]),
+                         trades(champ_go[champ_go["signal_id"].isin(kept_ids)]), trades(champ_go))
+    n, days = len(late), int(late["date"].nunique())
+    lo, hi = _day_boot(late["date"].tolist(), late["pnl"].to_numpy()) if n else (None, None)
+    mean = float(late["pnl"].mean()) if n else None
+    card = {"start": start, "sessions": int(sig["date"].nunique()), "n": n, "days": days,
+            "hit": float((late["pnl"] > 0).mean() * 100) if n else None,
+            "mean": {c: (mean - c if mean is not None else None) for c in COST_LEVELS},
+            "ci": {c: ((lo - c, hi - c) if lo is not None else (None, None)) for c in (0.05, 0.10)},
+            "worst_day": float(late.groupby("date")["pnl"].sum().min()) if n else None,
+            "total": {c: {"variant": float((kept["pnl"] - c).sum()), "champion": float((champ["pnl"] - c).sum())}
+                      for c in (0.05, 0.10)},
+            "consistent": bool(late["time"].map(registry.in_late_slice).all()) if n else True}
+    card["floor"] = n >= LATE_RULE["min_trades"] and days >= LATE_RULE["min_days"]
+    card["verdict"] = late_verdict(card)
+    card["conditions"] = late_conditions(card)
+    return card
+
+
+def late_verdict(card):
+    if not card["floor"]:
+        return "not enough data"
+    lo, hi = card["ci"][0.05]
+    if hi is not None and hi < 0:
+        return "supported: late entries lose money after 0.05% costs"
+    if lo is not None and lo > 0:
+        return "not supported: late entries make money after 0.05% costs"
+    return "not supported: inconclusive (the CI contains zero)"
+
+
+def late_conditions(card):
+    n, days = card["n"], card["days"]
+    hi = card["ci"][0.05][1]
+    return [(1, f"≥{LATE_RULE['min_trades']} late GO trades over ≥{LATE_RULE['min_days']} days "
+                f"({n}/{LATE_RULE['min_trades']}, {days}/{LATE_RULE['min_days']})", "met" if card["floor"] else "not yet"),
+            (2, "whole 95% CI of the late slice's mean after 0.05% below zero",
+             ("met" if hi is not None and hi < 0 else "not met") if card["floor"] else "not yet"),
+            (3, "owner approval", "not yet")]
+
+
+def locked_late_verdict(h=None):
+    """The verdict on the first Friday status at which the floor was met (protocol: later
+    weeks are reported but don't replace it), or None."""
+    for e in (h if h is not None else history()):
+        if (e.get("late") or {}).get("floor"):
+            return {"date": e["date"], "verdict": e["late"]["verdict"]}
+    return None
 
 
 def conditions(row):
@@ -135,10 +206,24 @@ def _f(x, digits=3):
     return "—" if x is None or x != x else f"{x:+.{digits}f}%"
 
 
+def late_line(late):
+    if not late:
+        return ""
+    ci = {c: late["ci"][c] for c in (0.05, 0.10)}
+    tot = late["total"]
+    state = "; ".join(f"{i} {s}" for i, _, s in late["conditions"])
+    return (f"{registry.LATE_CUT} (late slice: champion GO entered at or after 15:00, live from {late['start']}): "
+            f"{late['n']} late trades, {late['days']} days, after 0.05% {_f(late['mean'][0.05])} "
+            f"(95% CI {_f(ci[0.05][0])} to {_f(ci[0.05][1])}), after 0.10% {_f(late['mean'][0.10])} "
+            f"(95% CI {_f(ci[0.10][0])} to {_f(ci[0.10][1])}); total after 0.05%: variant {tot[0.05]['variant']:+.2f} vs "
+            f"champion {tot[0.05]['champion']:+.2f}, after 0.10%: {tot[0.10]['variant']:+.2f} vs "
+            f"{tot[0.10]['champion']:+.2f}. Conditions (docs/LATE_CUT_PROTOCOL.md): {state}. Verdict: {late['verdict']}.")
+
+
 def status_line(card, as_of):
     """One line per variant, plus the champion's numbers, for the given date."""
     if not card or not card["rows"]:
-        return f"**{as_of}**: no live variant data yet."
+        return f"**{as_of}**: no live variant data yet." + (" " + late_line(card.get("late")) if card else "")
     rows = {r["key"]: r for r in card["rows"]}
     c = rows["champion"]
     parts = [f"**{as_of}** · live since {card['start']}, {card['sessions']} session(s). "
@@ -153,6 +238,8 @@ def status_line(card, as_of):
         open_ = [f"{i} {s}" for i, _, s in r["conditions"] if s != "met"]
         parts.append(f"{r['label']}: {r['n']} trades, {r['days']} days, after 0.05% {_f(r['mean'][0.05])}; {diff}. "
                      f"Conditions met: {', '.join(met) or 'none'}; " + "; ".join(open_) + ".")
+    if card.get("late"):
+        parts.append(late_line(card["late"]))
     return " ".join(parts)
 
 
@@ -167,6 +254,8 @@ def record(as_of, card=None):
     """Store this date's status (replacing an earlier one for the same date)."""
     card = card if card is not None else scorecard(until=as_of)
     entry = {"date": as_of, "line": status_line(card, as_of)}
+    if card and card.get("late"):
+        entry["late"] = {"floor": card["late"]["floor"], "verdict": card["late"]["verdict"]}
     h = [e for e in history() if e.get("date") != as_of] + [entry]
     h.sort(key=lambda e: e["date"])
     p = status_file()

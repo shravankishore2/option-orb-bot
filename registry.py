@@ -74,6 +74,9 @@ def baseline():
 
 VARIANTS_DIR = MODELS / "variants"
 V2_THRESHOLD_VARIANT = 0.54          # docs/THRESHOLD_PROTOCOL.md, step 6
+LATE_CUT = "v2-late-cut"             # docs/LATE_CUT_PROTOCOL.md
+LATE_CUTOFF = dt.time(15, 0)         # fixed by that protocol; never re-tuned
+LATE_CUT_START = "2026-10-08"        # first session after the protocol commit (1f25674)
 
 
 def shadow_variants():
@@ -88,7 +91,19 @@ def shadow_variants():
         out.append({"name": "v2.1", "version": "v2.1", "model": m, "threshold": m.threshold})
     out.append({"name": "v2@0.54", "version": f"{BASELINE_VERSION}@{V2_THRESHOLD_VARIANT}", "model": None,
                 "threshold": V2_THRESHOLD_VARIANT})
+    # the champion's own GO decisions with entries at or after 15:00 dropped
+    # (docs/LATE_CUT_PROTOCOL.md); threshold None = the champion's
+    out.append({"name": LATE_CUT, "version": None, "model": "champion", "threshold": None,
+                "before": LATE_CUTOFF})
     return out
+
+
+def in_late_slice(entry_time):
+    """True for an entry at or after 15:00:00 IST (docs/LATE_CUT_PROTOCOL.md: inclusive,
+    fixed). entry_time: a datetime.time or "HH:MM[:SS]"."""
+    if not isinstance(entry_time, dt.time):
+        entry_time = dt.time.fromisoformat(str(entry_time).strip())
+    return entry_time >= LATE_CUTOFF
 
 
 def champion():
