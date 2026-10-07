@@ -99,3 +99,13 @@ confidence intervals. Only `source = live` signals from the deployment date coun
 ## Deviations
 
 (none yet)
+
+## Clarification (2026-10-07)
+
+Added after the protocol was committed; the text above is unchanged. Condition 3 ("the 95%
+day-block bootstrap confidence interval of that difference excludes zero") is met **only when the
+whole 95% CI of (variant minus champion, mean per trade after 0.05%) is above zero**. An interval
+wholly below zero also "excludes zero", but it means the variant is reliably worse, so it doesn't
+meet the condition. When this note was written, variants had been tracked live for one session
+(2026-10-07), far below the condition-1 floor. The scorecard and the Friday status line (`variant_status.conditions`) implement exactly
+this, and `tests/test_variant_status.py` checks it.
