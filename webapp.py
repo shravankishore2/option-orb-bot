@@ -34,7 +34,6 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
 import charts
-import exits
 import registry
 import shadow
 import strategy_config as C
@@ -345,19 +344,7 @@ STATUS_SHORT = {"open": "Open", "target": "Target", "stopped": "Stopped", "trail
                 "eod": "Closed EOD"}
 
 
-LIVE_RULES = (exits.CURRENT_RULE,) + tuple(exits.SHADOW_RULES)
-
-
-def chosen_rule():
-    r = request.args.get("rule", exits.CURRENT_RULE)
-    return r if r in LIVE_RULES else exits.CURRENT_RULE
-
-
-def rule_options():
-    return [(r, exits.RULE_LABELS.get(r, r)) for r in LIVE_RULES]
-
-
-def live_rows(day, cutoff, show, rule=exits.CURRENT_RULE):
+def live_rows(day, cutoff, show):
     """Today's decisions with their live state from the tracker (current price, P&L,
     trailing stop, best/worst, status) for GO and SKIP alike; the Telegram sent log's
     price is only a fallback when the tracker has no row."""
@@ -394,8 +381,6 @@ def live_rows(day, cutoff, show, rule=exits.CURRENT_RULE):
     for _, r in d.iterrows():
         direction = str(r["direction"]).upper()
         t = track.get(shadow.signal_id(r.get("date"), r["symbol"], r["direction"])) or {}
-        if rule != exits.CURRENT_RULE and t:
-            t = {**t, **(t.get("alt") or {}).get(rule, {})}      # the same signal under the what-if rule
         e = num(r.get("entry_price"))
         if t.get("price") is not None:
             c, diff = t["price"], t["pnl_pct"]              # signed in the trade's favour
@@ -638,14 +623,12 @@ def live():
     if cutoff not in TIME_FILTERS:
         cutoff = "15:15"
     day = now_ist().date().isoformat()
-    rule = chosen_rule()
 
-    rows, legacy = live_rows(day, cutoff, "all", rule)
-    everything, _ = live_rows(day, None, "all", rule)
+    rows, legacy = live_rows(day, cutoff, "all")
+    everything, _ = live_rows(day, None, "all")
     signals = _signals(rows)
     kw = dict(selected_time=cutoff, legacy=legacy, summary=signal_summary(records(everything)),
               selective_note=SELECTIVE_NOTE, signals=signals, scale=range_scale(signals),
-              rule=rule, rule_options=rule_options(), current_rule=exits.CURRENT_RULE,
               tickers=ticker_chips(signals))
     if request.args.get("fragment") == "1":
         return render_template("live_fragment.html", model=model_info(), **kw)
@@ -747,36 +730,6 @@ def skip_report(df, signals):
     return out
 
 
-def exit_rule_comparison(rule=None):
-    """Live signals labelled under both the current exit rule and a side-by-side rule:
-    per-trade P&L under each, for all signals and for GO. The evidence for (or against)
-    ever switching the live rule; it decides nothing by itself."""
-    rule = rule or (exits.SHADOW_RULES[0] if exits.SHADOW_RULES else None)
-    if not rule:
-        return None
-    s = shadow._read(shadow.SIGNALS_FILE)
-    o = shadow._read(shadow.OUTCOMES_FILE)
-    a = shadow._read(shadow.alt_outcomes_file(shadow.OUTCOMES_FILE, rule))
-    if s.empty or o.empty or a.empty:
-        return {"rule": rule, "label": exits.RULE_LABELS.get(rule, rule), "n": 0}
-    s = s[s["source"] == "live"].drop_duplicates("signal_id")[["signal_id", "date", "decision"]]
-    df = s.merge(o[["signal_id", "pnl_pct"]].drop_duplicates("signal_id"), on="signal_id") \
-          .merge(a[["signal_id", "pnl_pct"]].drop_duplicates("signal_id"), on="signal_id", suffixes=("_cur", "_alt"))
-    for c in ("pnl_pct_cur", "pnl_pct_alt"):
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna(subset=["pnl_pct_cur", "pnl_pct_alt"])
-
-    def side(x):
-        d = x["pnl_pct_alt"] - x["pnl_pct_cur"]
-        return {"n": len(x), "cur": float(x["pnl_pct_cur"].mean()) if len(x) else None,
-                "alt": float(x["pnl_pct_alt"].mean()) if len(x) else None,
-                "changed": int((d.abs() > 1e-9).sum()), "better": int((d > 1e-9).sum()),
-                "worse": int((d < -1e-9).sum()), "too_few": len(x) < shadow.MIN_SAMPLE}
-    return {"rule": rule, "label": exits.RULE_LABELS.get(rule, rule), "n": len(df),
-            "sessions": int(df["date"].nunique()), "first": df["date"].min() if len(df) else None,
-            "all": side(df), "go": side(df[df["decision"] == "GO"])}
-
-
 VARIANT_RULE = {"min_trades": 50, "min_days": 15, "cost": 0.05}    # docs/THRESHOLD_PROTOCOL.md, step 7
 
 
@@ -873,7 +826,7 @@ def scorecard_view(by):
             "scored_by": scored_by, "min_sample": shadow.MIN_SAMPLE, "costs": C.COST_SENSITIVITY,
             "comparisons": list(reversed(registry.comparisons()))[:12],
             "drift": read_json(str(shadow.LIVE_DIR / "drift.json")),
-            "skips": skip_report(df, signals), "exit_compare": exit_rule_comparison(),
+            "skips": skip_report(df, signals),
             "variants": variant_scorecard()}
 
 
@@ -1025,14 +978,9 @@ def guest_tracker_snapshot():
     rows = []
     for r in snap["rows"]:
         sign = 1.0 if r.get("direction") == "BUY" else -1.0
-        alt = {rule: {**{k: a.get(k) for k in ("status", "status_label", "pnl_pct", "best_pct", "worst_pct",
-                                                 "exit_time")},
-                      "stop_pct": _pct(a.get("trail_stop"), r.get("entry"), sign)}
-               for rule, a in (r.get("alt") or {}).items()}
         rows.append({**{k: r.get(k) for k in GUEST_TRACKER_FIELDS},
                      "stop_pct": _pct(r.get("trail_stop"), r.get("entry"), sign),
-                     "initial_stop_pct": _pct(r.get("initial_stop", r.get("stop")), r.get("entry"), sign),
-                     "alt": alt})
+                     "initial_stop_pct": _pct(r.get("initial_stop", r.get("stop")), r.get("entry"), sign)})
     return {"version": snap.get("version"), "day": snap.get("day"), "as_of": snap.get("as_of"),
             "today": snap["today"], "summary": snap["summary"], "rows": rows, "guest": True}
 
@@ -1043,13 +991,11 @@ def guest_live():
     if cutoff not in TIME_FILTERS:
         cutoff = "15:15"
     day = now_ist().date().isoformat()
-    rule = chosen_rule()
-    rows, _ = live_rows(day, cutoff, "all", rule)
-    everything, _ = live_rows(day, None, "all", rule)
+    rows, _ = live_rows(day, cutoff, "all")
+    everything, _ = live_rows(day, None, "all")
     signals = [guest_signal(s) for s in _signals(rows)]
     kw = dict(selected_time=cutoff, legacy=False, summary=signal_summary(records(everything)),
               selective_note=SELECTIVE_NOTE, signals=signals, scale=range_scale(signals),
-              rule=rule, rule_options=rule_options(), current_rule=exits.CURRENT_RULE,
               tickers=ticker_chips(signals))
     if request.args.get("fragment") == "1":
         return render_template("live_fragment.html", model=model_info(), **kw)

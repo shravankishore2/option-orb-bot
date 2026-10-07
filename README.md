@@ -194,15 +194,11 @@ written confirmation from Dhan has not been obtained.
   scorecard and RESULTS.md.
 - Sessions before tracking began were replayed through the live engine
   (`shadow_backfill.py`) and are marked `replay`.
-- **Exit rules are versioned** (`exits.RULES`). `exit_v1` is the live rule and
-  produced every published number. A post-hoc variant, a 10-minute grace before
-  the trailing stop can trigger (`exit_v2_grace10`), is walked for every live
-  signal side by side, with its own labels that neither decide nor train
-  anything; the dashboard has a what-if toggle and the scorecard compares the
-  two. On the walk-forward signals it changes the model's trades by about
-  +0.002% per trade (95% CIs include zero; [`docs/EXIT_GRACE.md`](docs/EXIT_GRACE.md)).
-  A 5-minute grace is identical to `exit_v1`: the trail only moves after a
-  candle is survived.
+- **One exit rule** (`exit_v1`, in `exits.py`) produced every published number
+  and is the only one tracked live. A trailing-stop grace period was tested and
+  tracked side by side, then retired (2026-10-07). Not adopted: a 5-minute
+  grace is identical by construction and a 10-minute grace was within noise
+  ([`docs/EXIT_GRACE.md`](docs/EXIT_GRACE.md)).
 
 ## Setup
 

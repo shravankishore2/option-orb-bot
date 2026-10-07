@@ -1,6 +1,11 @@
 """
 exit_grace_backtest.py — the trailing-stop grace period vs the current exit rule.
 
+Concluded: not adopted. grace5 identical by construction, grace10 within noise.
+Kept as the record of docs/EXIT_GRACE.md. The grace code was removed from exits.py
+on 2026-10-07, so to re-run this, restore the version it used first:
+    git show 890d966:exits.py > exits.py      # then git checkout exits.py afterwards
+
 Post-hoc idea (2026-10-06), tested on the same walk-forward signals and decisions
 as docs/RESULTS.md (data/research/walkforward.csv): every signal is re-scored with
 exits.simulate_day on the same cached 5-minute candles under each rule, and the
@@ -98,6 +103,8 @@ def table(df, label, rng):
 
 
 def main():
+    if "trail_grace_min" not in exits.simulate.__code__.co_varnames:
+        raise SystemExit("the grace code was retired from exits.py; see this file's docstring to re-run it")
     os.environ.setdefault("ORBITAL_OFFLINE", "1")
     wf = pd.read_csv(WF, dtype={"date": str, "time": str})
     print(f"re-scoring {len(wf):,} walk-forward signals under {len(GRACES)} rules...", flush=True)
