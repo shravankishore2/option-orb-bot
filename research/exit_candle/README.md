@@ -1,0 +1,1 @@
+The missing 15:15 candle: from 2026-08-03 NSE's Closing Auction Session ends continuous trading in F&O stocks at 15:15, so forced exits fall back to the 15:10 candle's close (LAST). The earlier exit is about −0.03% per trade in history, and entries at 15:10 become one-candle trades. Reported in `docs/EXIT_CANDLE.md`.

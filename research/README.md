@@ -10,5 +10,6 @@ their outputs go to `docs/`. Nothing here is imported by the live bot, the dashb
 | [`exit_grace/`](exit_grace/) | A trailing-stop grace period: 5 min is identical by construction, 10 min within noise; not adopted | `docs/EXIT_GRACE.md` |
 | [`late_entry/`](late_entry/) | v2's entries at or after 15:00 are 42% of its trades but 8% of its P&L after 0.05% cost; prices are tradable | `docs/LATE_ENTRY.md` |
 | [`v1_exploration/`](v1_exploration/) | The 4-Sep exploration: label choice, exit sweep, option payoff | `PROJECT_GUIDE.md` §4–5 |
+| [`exit_candle/`](exit_candle/) | NSE's closing auction (from 3 Aug 2026) removed the 15:15–15:25 candles for F&O stocks; forced exits now fall back to 15:10 | `docs/EXIT_CANDLE.md` |
 | [`v3/`](v3/) | No v3 variant beat v2 under its pre-set rule | `docs/V3_RESULTS.md` on branch `research/v3-candidate` |
 | AUC reconciliation (in `model_report.py`, a pipeline step) | 0.665 was a different label and dataset; v2's out-of-sample AUC is 0.535 | `docs/MODEL.md`, "Which AUC to quote" |
