@@ -48,13 +48,13 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 # LOGIN — password only, signed session cookie (same scheme as QuantRadar)
 # ---------------------------------------------------------------------------
 
-SESSION_HOURS = 12
+SESSION_HOURS = 30 * 24          # 30-day login
 PASSWORD = auth.configured_password()
 REQUIRE_LOGIN = os.getenv("ORBITAL_REQUIRE_LOGIN") == "1"
 if not PASSWORD and REQUIRE_LOGIN:
     raise SystemExit("ORBITAL_REQUIRE_LOGIN=1 but no dashboard password is configured")
-_secret = os.getenv("ORBITAL_DASHBOARD_SECRET")
-SIGNER = auth.SessionSigner(_secret.encode() if _secret else None, ttl_s=SESSION_HOURS * 3600)
+SIGNER = auth.SessionSigner(auth.signing_key(PASSWORD, os.getenv("ORBITAL_DASHBOARD_SECRET")),
+                            ttl_s=SESSION_HOURS * 3600)
 CHECKER = auth.PasswordCheck(PASSWORD) if PASSWORD else None
 OPEN_ENDPOINTS = {"login_page", "login_form", "api_login", "logout", "api_logout", "healthz",
                   "static", "robots"}          # static: CSS/JS/figures only, no data

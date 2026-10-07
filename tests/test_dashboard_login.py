@@ -106,3 +106,16 @@ def test_static_files_are_public_but_carry_no_data(client):
     """CSS/JS/figures are served without a session (the guest view needs them); data never is."""
     assert client.get("/static/style.css").status_code == 200
     assert client.get("/api/tracker").status_code == 401
+
+
+def test_session_lasts_30_days(client):
+    r = login(client)
+    assert f"Max-Age={30 * 24 * 3600}" in r.headers["Set-Cookie"]
+
+
+def test_session_key_survives_a_restart_but_not_a_password_change():
+    cookie = auth.SessionSigner(auth.signing_key(PW)).issue()
+    assert auth.SessionSigner(auth.signing_key(PW)).valid(cookie)             # restarted process
+    assert not auth.SessionSigner(auth.signing_key("new password")).valid(cookie)
+    assert auth.signing_key(PW, "explicit secret") == b"explicit secret"
+    assert auth.signing_key("") is None                                        # local, no password
