@@ -40,3 +40,6 @@ __pycache__/
 
 # --- private notes (the repo is public) --------------------------------------
 docs/INTERVIEW_PREP.md
+
+# private task list (kept out of the public repo)
+TASKS.md
