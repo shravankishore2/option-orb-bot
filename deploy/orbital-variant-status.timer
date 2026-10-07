@@ -1,0 +1,12 @@
+# /etc/systemd/system/orbital-variant-status.timer — Fridays 16:15 IST, after the session's
+# labels are written (the bot exits after its 15:40 snapshot).
+[Unit]
+Description=ORBITAL weekly shadow-variant status, Fridays after the close
+
+[Timer]
+OnCalendar=Fri *-*-* 16:15:00 Asia/Kolkata
+Persistent=true
+Unit=orbital-variant-status.service
+
+[Install]
+WantedBy=timers.target

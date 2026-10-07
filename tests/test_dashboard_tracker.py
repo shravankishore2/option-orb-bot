@@ -294,11 +294,30 @@ def test_scorecard_shows_the_champion_and_the_shadow_variants(open_client, files
     pd.DataFrame(out).to_csv(files / "o.csv", index=False)
     pd.DataFrame(var).to_csv(files / "shadow_variants.csv", index=False)
     monkeypatch.setattr(shadow, "LIVE_DIR", files)
-    vs = webapp.variant_scorecard()
+    import variant_status
+    vs = variant_status.scorecard()
     rows = {r["key"]: r for r in vs["rows"]}
     assert rows["champion"]["n"] == 3 and rows["champion"]["days"] == 3 and rows["champion"]["mean"][0.0] == pytest.approx(0.9)
     v = rows["v2@0.54"]
     assert v["n"] == 6 and v["mean"][0.05] == pytest.approx(0.35 - 0.05) and v["worst_day"] == pytest.approx(0.7)
     assert v["diff"] == pytest.approx(0.35 - 0.9) and not v["rule"]["enough"]
     html = open_client.get("/scorecard").get_data(as_text=True)
-    assert "Champion vs shadow variants" in html and "v2@0.54 @ 0.540" in html and "not enough data yet" in html
+    assert "Champion vs shadow variants" in html and "v2@0.54 @ 0.540" in html
+    conds = dict((i, s) for i, _, s in v["conditions"])
+    assert conds == {1: "not yet", 2: "not met", 3: "not met", 4: "met", 5: "not yet"}
+    assert "(6/50, 3/15)" in html and "the step-5 sweep agrees" in html
+
+    # the Friday status: a dated line in the JSON history, on the scorecard and in the doc
+    doc = files / "THRESHOLD_RESULTS.md"
+    doc.write_text("# Results\n\nbody\n")
+    variant_status.write_doc(variant_status.record("2026-10-09"), doc)
+    variant_status.write_doc(variant_status.record("2026-10-09"), doc)          # same date: replaced, not added
+    h = variant_status.record("2026-10-16")
+    variant_status.write_doc(h, doc)
+    text = doc.read_text()
+    assert text.startswith("# Results\n\nbody\n") and text.count("variant-status:start") == 1
+    assert text.count("- **2026-10-09**") == 1 and "- **2026-10-16**" in text
+    line = h[-1]["line"]
+    assert "v2@0.54 @ 0.540: 6 trades, 3 days, after 0.05% +0.300%" in line and "Conditions met: 4;" in line
+    assert "1 not yet; 2 not met; 3 not met; 5 not yet" in line
+    assert "2026-10-16 · live since 2026-10-08" in open_client.get("/scorecard").get_data(as_text=True)

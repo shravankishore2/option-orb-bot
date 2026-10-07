@@ -297,7 +297,18 @@
             at least {{ vs.rule.min_trades }} live GO trades over at least {{ vs.rule.min_days }} trading days, a higher mean after
             {{ vs.rule.cost }}% costs than the champion with the 95% CI of the difference excluding zero, (for the threshold) the
             historical sweep agreeing, and the owner's approval.
-            {% for r in vs.rows if r.rule is defined %}{{ r.label }}: {{ "enough data" if r.rule.enough else "not enough data yet" }}{% if r.rule.enough %}, {{ "ahead" if r.rule.beats else "behind" }}, CI {{ "excludes" if r.rule.ci_excludes_zero else "includes" }} zero{% endif %}.{% if not loop.last %} {% endif %}{% endfor %}</p>
+            </p>
+        <ul class="footnote cond-list">
+            {% for r in vs.rows if r.conditions is defined %}
+            <li><strong>{{ r.label }}</strong>: {% for i, text, state in r.conditions %}({{ i }}) {{ text }}: <span class="cond-{{ state|replace(' ', '-') }}">{{ state }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% if sc.variant_status %}
+        <h4 class="sub">Weekly status (Fridays after the close)</h4>
+        <ul class="footnote cond-list">
+            {% for e in sc.variant_status %}<li>{{ e.line|replace("**", "") }}</li>{% endfor %}
+        </ul>
         {% endif %}
 
         <h3 class="sub">Training / serving skew (weekly)</h3>

@@ -1,0 +1,20 @@
+# /etc/systemd/system/orbital-variant-status.service — the weekly status of the shadow variants
+# (v2.1, v2 @ 0.54) against the champion: trades, days, mean after 0.05%, the CI of the
+# difference and which protocol conditions are met. Appends to data/live/variant_status.json
+# (dashboard scorecard) and rewrites the status block of docs/THRESHOLD_RESULTS.md. Decides nothing.
+[Unit]
+Description=ORBITAL weekly shadow-variant status
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/orbital
+Environment=PYTHONUNBUFFERED=1 TZ=Asia/Kolkata OMP_NUM_THREADS=1
+ExecStart=/home/ubuntu/orbital/.venv/bin/python -u variant_status.py
+MemoryHigh=350M
+MemoryMax=450M
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+SyslogIdentifier=orbital-variant-status

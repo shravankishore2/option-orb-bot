@@ -1078,3 +1078,10 @@ th[aria-sort="descending"] .sort i::after { content: "↓"; opacity: 1; }
     .table-search { width: 100%; }
     .dd-item label { min-height: 40px; }
 }
+
+/* protocol conditions under the variant scorecard */
+.cond-list { margin: 6px 0 0; padding-left: 18px; }
+.cond-list li { margin: 4px 0; }
+.cond-met { color: var(--green); font-weight: 600; }
+.cond-not-met { color: var(--red); }
+.cond-not-yet { color: var(--muted); }
