@@ -347,8 +347,11 @@ data — each as a new pre-registration.
 - Run `python main.py --snapshot` after 15:40 (CI does it at 16:10) so tomorrow's
   previous close is the official one even if Dhan's daily bar is late.
 - Replace `data/ind_nifty200list.csv` after each rebalance (end Mar / Sep).
-- Dhan's most recent sessions currently lack their last three 5-min candles
-  (15:15–15:25); older days are complete. Recent trades exit at the 15:10 close.
+- Forced exits use the 15:15 candle: the position closes at that candle's close, 15:20
+  (`exits.simulate`, exit reason TIME). But since 3 Aug 2026 Dhan's 5-min data usually lacks
+  the 15:15–15:25 candles (older days are complete). When the 15:15 candle is missing, the
+  trade closes at the close of the last candle there is, normally the 15:10 candle (exit reason
+  LAST). On the live sessions of 5–7 Oct, 47 trades closed this way and 4 at 15:15.
 - `data/research/v1/` holds the 4-Sep dataset; superseded code was removed from the tree on 2026-10-07 (git history keeps it).
 
 ## 10. How to run it
