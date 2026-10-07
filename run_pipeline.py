@@ -16,7 +16,8 @@ Steps
   live-model   the model the live bot uses (trained on everything)
   report     baselines, statistics, clean-test tables → docs/RESULTS.md
   paper      the live bot replayed cycle by cycle over the forward clean period
-  explain    SHAP figures and docs/MODEL.md
+  explain    SHAP figures and docs/MODEL_SHAP.md
+  model      the model's inputs and importances → docs/MODEL.md
 """
 
 import argparse
@@ -50,6 +51,7 @@ STEPS = [
     ("paper", [PY, "paper_trade.py", "--start", C.CLEAN_FORWARD[0].isoformat(),
                "--end", C.CLEAN_FORWARD[1].isoformat()]),
     ("explain", [PY, "explain_model.py"]),
+    ("model", [PY, "model_report.py"]),
 ]
 
 

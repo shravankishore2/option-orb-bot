@@ -9,7 +9,7 @@ library is needed.
 Writes:
   static/figures/shap_global.png     which inputs matter most (mean |SHAP|)
   static/figures/shap_beeswarm.png   and in which direction
-  docs/MODEL.md                      the same, in words, with worked examples
+  docs/MODEL_SHAP.md                 the same, in words, with worked examples
 
     python explain_model.py
 """
@@ -152,7 +152,7 @@ def main(sample=8000, seed=0):
               "emphasis can differ."]
 
     (BASE_DIR / "docs").mkdir(exist_ok=True)
-    (BASE_DIR / "docs" / "MODEL.md").write_text("\n".join(lines))
+    (BASE_DIR / "docs" / "MODEL_SHAP.md").write_text("\n".join(lines))
     print("\n".join(lines[:40]))
 
 

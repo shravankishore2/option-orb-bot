@@ -515,7 +515,7 @@
         <div class="figure-grid">
             {% for f in view.shap %}<img src="{{ url_for('static', filename='figures/' + f) }}" alt="model explanation {{ f }}">{% endfor %}
         </div>
-        <p class="footnote">SHAP values: how much each input pushed a signal's score up or down. See docs/MODEL.md.</p>
+        <p class="footnote">SHAP values: how much each input pushed a signal's score up or down. See docs/MODEL_SHAP.md, and docs/MODEL.md for every input and its importance.</p>
         {% endif %}
 
         {% if view.paper %}

@@ -85,7 +85,8 @@ the batch backtest.
 | `walk_forward.py` | Retrain before every month, absolute threshold from calibration; `--train-live`; `--label` |
 | `baselines.py` · `stats.py` · `report.py` | Random entry baseline; day-block bootstrap CI, Sharpe, max DD, deflated Sharpe, permutation test, best-month concentration → `docs/RESULTS.md` |
 | `paper_trade.py` | Replays past sessions cycle-by-cycle through the live engine and diffs against the backtest |
-| `explain_model.py` | Exact tree SHAP via XGBoost → figures + `docs/MODEL.md` |
+| `explain_model.py` | Exact tree SHAP via XGBoost → figures + `docs/MODEL_SHAP.md` |
+| `model_report.py` | Every model input, how it is computed, gain + permutation importance → `docs/MODEL.md` |
 | `run_pipeline.py` | All of the above in order, resumable |
 | `live_engine.py` | Live decisions; `DhanSource` / `CacheSource`; session-OHLC snapshot fallback |
 | `main.py` | The bot: 5-min loop, `--once`, `--dry-run`, `--snapshot`; holiday / token / restart handling |

@@ -261,7 +261,9 @@ at 3/s (`rate_per_sec`) and stays silent around each minute boundary
 | | `walk_forward.py` | Monthly retrain-and-score; trains the live model |
 | | `baselines.py`, `stats.py`, `report.py` | Baselines, bootstrap CIs, Sharpe, deflated Sharpe → `docs/RESULTS.md` |
 | | `paper_trade.py` | Replays past sessions through the **live** code, cycle by cycle |
-| | `explain_model.py` | SHAP explanation → `docs/MODEL.md` |
+| | `model_report.py` | The model's 28 inputs, how each is computed, gain + permutation importance → `docs/MODEL.md` |
+| | `explain_model.py` | SHAP explanation → `docs/MODEL_SHAP.md` |
+| | `late_entry_check.py` | Holding times, late entries and fill realism → `docs/LATE_ENTRY.md` |
 | | `run_pipeline.py` | Runs all of the above in order |
 | **Live** | `live_engine.py` | Decision engine (completed candles → rules → features → model) |
 | | `main.py` | The bot: 5-minute loop, Telegram, logs (`--session` for the systemd timer) |
