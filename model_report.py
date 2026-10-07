@@ -40,6 +40,9 @@ WF_DIR = BASE / "models" / "walkforward"
 OUT = BASE / "docs" / "MODEL.md"
 REPEATS = 5
 WF_MONTHS = 12
+WF_FILE = BASE / "data" / "research" / "walkforward.csv"
+V1_DIR = BASE / "data" / "research" / "v1"
+AUC_BOOT = 500
 
 PIT = {
     "signal": "the signal row, all known when the signal candle closes",
@@ -129,6 +132,163 @@ def perm_drop(model, X, y, groups, rng):
             drops.append(base - roc_auc_score(y, model.predict_proba(Xp)[:, 1]))
         out[f] = (float(np.mean(drops)), float(np.std(drops)))
     return base, out
+
+
+def period_auc(df, score_col, rng):
+    """AUC of `score_col` on the profit label, with a 95% day-block bootstrap CI."""
+    y, s, d = df["profit"].to_numpy(), df[score_col].to_numpy(), df["date"].to_numpy()
+    if len(np.unique(y)) < 2:
+        return None, (None, None)
+    days = np.unique(d)
+    pos = {x: np.flatnonzero(d == x) for x in days}
+    boots = []
+    for _ in range(AUC_BOOT):
+        ix = np.concatenate([pos[x] for x in rng.choice(days, len(days))])
+        if len(np.unique(y[ix])) == 2:
+            boots.append(roc_auc_score(y[ix], s[ix]))
+    return roc_auc_score(y, s), tuple(np.percentile(boots, [2.5, 97.5]))
+
+
+def periods(meta, first, last):
+    """Calendar years before v2's held-out calibration window, then its quarters."""
+    cal = meta["calibration_from"]
+    out = [(f"{y}", f"{y}-01-01", min(f"{y}-12-31", (dt.date.fromisoformat(cal) - dt.timedelta(days=1)).isoformat()), True)
+           for y in range(int(first[:4]), int(cal[:4]) + 1) if f"{y}-01-01" < cal]
+    q0 = dt.date.fromisoformat(cal)
+    q = dt.date(q0.year, 3 * ((q0.month - 1) // 3) + 1, 1)
+    while q.isoformat() <= last:
+        nxt = dt.date(q.year + (q.month == 10), (q.month + 2) % 12 + 1, 1)
+        a, b = max(q, q0).isoformat(), min(nxt - dt.timedelta(days=1), dt.date.fromisoformat(last)).isoformat()
+        out.append((f"{q.year} Q{(q.month - 1) // 3 + 1}", a, b, False))
+        q = nxt
+    return out
+
+
+def v1_reference():
+    """The 0.628 / 0.665 forward AUCs: train_classifier.py's holdout on the 4-Sep dataset
+    (data/research/v1/). Recomputed here with that script's own loaders, features, split
+    (oldest 80% of sessions vs the rest) and model settings; the throwaway model is never
+    saved, and v2 is untouched. Also scores both models on the signals both datasets share,
+    under both datasets' labels. None if the 4-Sep dataset isn't on this machine."""
+    if not (V1_DIR / "historical_orb_features.csv").exists():
+        return None
+    import contextlib
+    import io
+    from xgboost import XGBClassifier
+    import train_classifier as T
+    with contextlib.redirect_stdout(io.StringIO()):          # the script narrates every step
+        sig, res = T.load_data("historical")
+        m = T.prepare_dataset(sig, res)
+        m, extra = T.attach_extra_features(m)
+        m = T.apply_label(m, "profit")
+        df, geo = T.engineer_features(m)
+    days = np.sort(df["date"].unique())
+    split = days[int(len(days) * 0.8)]
+    tr = (df["date"] < split).to_numpy()
+    y = df["label"].to_numpy()
+
+    def fit(cols):          # the settings of train_classifier.train()
+        X = df[cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+        mdl = XGBClassifier(n_estimators=200, max_depth=3, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8,
+                            scale_pos_weight=(y == 0).sum() / y.sum(),   # over all rows, as that script did
+                            eval_metric="logloss", random_state=42)
+        mdl.fit(X[tr], y[tr])
+        p = mdl.predict_proba(X[~tr])[:, 1]
+        return roc_auc_score(y[~tr], p), p
+    full = geo + [f for f in extra if f in df.columns]
+    auc28, p28 = fit(full)
+    auc9, _ = fit(geo)
+    auc_no_atr, _ = fit([f for f in full if f not in ("atr_pct", "atr_norm_range")])
+    te = df.loc[~tr, ["date", "symbol", "direction", "label"]].assign(p_v1=p28)
+    te["symbol"], te["direction"] = te["symbol"].str.upper(), te["direction"].str.upper()
+    wf = pd.read_csv(WF_FILE, dtype={"date": str, "time": str})
+    wf = wf[(wf["date"] >= split) & (wf["date"] <= days[-1])]
+    j = te.merge(wf[["date", "symbol", "direction", "score", "profit"]], on=["date", "symbol", "direction"])
+    res = res.copy()
+    res.columns = [c.lower() for c in res.columns]
+    return {"rows": len(df), "first": days[0], "last": days[-1], "split": split, "train": int(tr.sum()),
+            "test": int((~tr).sum()), "symbols": int(df["symbol"].nunique()), "auc28": auc28, "auc9": auc9,
+            "auc_no_atr": auc_no_atr, "n28": len(full), "win": float(y[~tr].mean()),
+            "exits": res["exit_reason"].value_counts().to_dict(),
+            "wf_same_window": (roc_auc_score(wf["profit"], wf["score"]), len(wf), float(wf["profit"].mean())),
+            "overlap": len(j), "labels_agree": float((j["label"] == j["profit"]).mean()),
+            "v1_on_v1": roc_auc_score(j["label"], j["p_v1"]), "v1_on_v2": roc_auc_score(j["profit"], j["p_v1"]),
+            "v2_on_v2": roc_auc_score(j["profit"], j["score"]), "v2_on_v1": roc_auc_score(j["label"], j["score"])}
+
+
+def which_auc_section(df, model, feats, meta, auc_wf, wf_rows, months, auc_cal, cal_rows, rng):
+    """The "Which AUC to quote" section."""
+    df = df[df["date"] <= meta["trained_through"]].copy()
+    df["v2"] = model.predict_proba(df[feats].fillna(0))[:, 1]
+    wf = pd.read_csv(WF_FILE, dtype={"date": str, "time": str})
+    md = ["## Which AUC to quote", "",
+          "AUC here is the ROC AUC of a score against the `profit` label: the chance a random winning signal "
+          "scores above a random losing one (0.5 = no better than chance). Two very different numbers have been "
+          "quoted for this project. Every number below is recomputed by this script.", ""]
+    v1 = v1_reference()
+    md += ["### Where each number comes from", "",
+           "| Number | Model | Label | Signals scored | Date window | Out of sample? |", "|---|---|---|---|---|---|",
+           f"| **{auc_wf:.3f}** | the walk-forward models (each month's model, trained only on earlier months) | "
+           f"`profit` under exit_v1 | {wf_rows:,} | {months[0]} → {months[-1]} (last {WF_MONTHS} months) | yes |",
+           f"| **{auc_cal:.3f}** | v2 itself (`models/orbital_model.pkl`) | `profit` under exit_v1 | {cal_rows:,} | "
+           f"{meta['calibration_from']} → {meta['trained_through']} (v2's calibration sessions) | yes: never used to "
+           "fit v2, only to set its threshold |"]
+    if v1:
+        md += [f"| **{v1['auc28']:.3f}** | `train_classifier.py` (the 4-Sep exploration): one XGBoost, "
+               f"{v1['n28']} inputs, 200 trees of depth 3, trained before {v1['split']} | `profit` under the **4-Sep exit "
+               f"rule** (midpoint target, trailing stop, EOD 15:15) | {v1['test']:,} | {v1['split']} → {v1['last']} "
+               f"(the newest 20% of sessions of {v1['first']} → {v1['last']}) | yes, but on a different dataset |",
+               f"| {v1['auc9']:.3f} | the same, 9 geometry inputs only (the \"0.628 → 0.665\" comparison) | same | "
+               f"{v1['test']:,} | same | same |"]
+    else:
+        md += ["| 0.665 | `train_classifier.py` on `data/research/v1/` (not on this machine, so not recomputed) | "
+               "`profit` under the 4-Sep exit rule | 10,475 | 2026-01-30 → 2026-09-04 | on a different dataset |"]
+    if v1:
+        wfa, wfn, wfwin = v1["wf_same_window"]
+        md += ["", "### Why 0.665 isn't comparable", "",
+               f"- **A different label.** The 4-Sep dataset's `profit` is \"made money under the 4-Sep exit rule\", which "
+               f"had a midpoint target ({v1['exits'].get('Target (Midpoint)', 0):,} of {sum(v1['exits'].values()):,} exits). "
+               f"On the {v1['overlap']:,} test signals the two datasets share (same date, stock and direction), "
+               f"the two `profit` labels agree on only **{v1['labels_agree'] * 100:.1f}%** of them.",
+               f"- **The 4-Sep model doesn't rank v2's label.** On those shared signals it scores "
+               f"{v1['v1_on_v1']:.3f} against its own label but **{v1['v1_on_v2']:.3f}** against v2's. v2's "
+               f"walk-forward scores do the opposite: {v1['v2_on_v2']:.3f} on v2's label, {v1['v2_on_v1']:.3f} on the "
+               "4-Sep one.",
+               f"- **Same window, current label:** v2's walk-forward AUC over {v1['split']} → {v1['last']} is "
+               f"**{wfa:.3f}** ({wfn:,} signals).",
+               f"- **Other differences:** the 4-Sep set uses today's {v1['symbols']} index stocks for all of history "
+               "(survivorship), and its context features come from the 4-Sep code, whose ATR included the signal "
+               "day's own range (a lookahead, since fixed). That lookahead barely matters here: without the two ATR "
+               f"inputs the 4-Sep holdout AUC is {v1['auc_no_atr']:.3f}.", ""]
+
+    rows = []
+    for name, a, b, in_sample in periods(meta, df["date"].min(), meta["trained_through"]):
+        g = df[(df["date"] >= a) & (df["date"] <= b)]
+        w = wf[(wf["date"] >= a) & (wf["date"] <= b)]
+        auc, ci = period_auc(g, "v2", rng)
+        wauc, wci = period_auc(w, "score", rng) if len(w) else (None, (None, None))
+        rows.append(f"| {name} | {a} → {b} | {len(g):,} | {g['profit'].mean() * 100:.1f}% | "
+                    + (f"{auc:.3f} [{ci[0]:.3f}, {ci[1]:.3f}]" if auc is not None else "—")
+                    + (" (in-sample)" if in_sample else "") + " | "
+                    + (f"{wauc:.3f} [{wci[0]:.3f}, {wci[1]:.3f}] ({len(w):,})" if wauc is not None else "—") + " |")
+    md += ["### v2's AUC by period", "",
+           f"v2's own scores on the `profit` label: by quarter over its held-out calibration window (from "
+           f"{meta['calibration_from']}) and by calendar year before it. **The years before are in-sample**: v2 was fit "
+           "on those signals, so they show how well it memorised them, not how well it predicts. The last column is "
+           "the out-of-sample comparison: the walk-forward score of each signal (the model trained before its "
+           f"month). 95% CIs from a day-block bootstrap ({AUC_BOOT} resamples).", "",
+           "| Period | Dates | Signals | Winners | v2 AUC [95% CI] | Walk-forward AUC [95% CI] (signals) |",
+           "|---|---|---|---|---|---|", *rows, "",
+           "### What to quote", "",
+           f"- **Quote {auc_wf:.3f}** (walk-forward, last {WF_MONTHS} months), alongside v2's own held-out "
+           f"{auc_cal:.3f}: v2's design, its label, data it never trained on.",
+           "- Don't quote the in-sample years: they measure fit, not prediction.",
+           "- Don't quote 0.665 (or 0.628 → 0.665) for v2. It's a different label, dataset and model. If it comes up, "
+           "say what it was: the 4-Sep exploration's forward holdout, on a label that agrees with today's on about "
+           "60% of the same signals.",
+           "- AUC isn't the target anyway: the model only has to rank the top 2% well. Per-trade P&L of the GO trades "
+           "(docs/RESULTS.md, docs/LATE_ENTRY.md) is the number that matters.", ""]
+    return md
 
 
 def main():
@@ -241,6 +401,7 @@ def main():
            f"- Of the three inputs v2.1 drops, `orb_range_abs` ranks {order.index('orb_range_abs') + 1} and "
            f"`prev_close_vs_orb` {order.index('prev_close_vs_orb') + 1} by walk-forward permutation (both help a "
            f"little), `entry_log` {order.index('entry_log') + 1} (slightly harmful).", "",
+           *which_auc_section(df, model, feats, meta, auc_wf, len(wf), months, auc_cal, len(cal), rng),
            "## v2.1 (shadow variant, decides nothing)", "",
            f"v2.1 is v2's recipe with three inputs removed: {', '.join(f'`{f}`' for f in v21['dropped_from_v2'])}. "
            f"Same rows ({v21['rows']:,}, {v21['trained_from']} → {v21['trained_through']}), same calibration split, "

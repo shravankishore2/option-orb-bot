@@ -91,6 +91,49 @@ A drop near zero means shuffling that input doesn't change the ranking out of sa
 - `direction_enc` is never used in a split (gain 0), so it has no effect on the score.
 - Of the three inputs v2.1 drops, `orb_range_abs` ranks 5 and `prev_close_vs_orb` 8 by walk-forward permutation (both help a little), `entry_log` 22 (slightly harmful).
 
+## Which AUC to quote
+
+AUC here is the ROC AUC of a score against the `profit` label: the chance a random winning signal scores above a random losing one (0.5 = no better than chance). Two very different numbers have been quoted for this project. Every number below is recomputed by this script.
+
+### Where each number comes from
+
+| Number | Model | Label | Signals scored | Date window | Out of sample? |
+|---|---|---|---|---|---|
+| **0.535** | the walk-forward models (each month's model, trained only on earlier months) | `profit` under exit_v1 | 17,702 | 2025-10 → 2026-09 (last 12 months) | yes |
+| **0.535** | v2 itself (`models/orbital_model.pkl`) | `profit` under exit_v1 | 16,086 | 2025-11-13 → 2026-09-22 (v2's calibration sessions) | yes: never used to fit v2, only to set its threshold |
+| **0.665** | `train_classifier.py` (the 4-Sep exploration): one XGBoost, 28 inputs, 200 trees of depth 3, trained before 2026-01-30 | `profit` under the **4-Sep exit rule** (midpoint target, trailing stop, EOD 15:15) | 10,475 | 2026-01-30 → 2026-09-04 (the newest 20% of sessions of 2023-09-05 → 2026-09-04) | yes, but on a different dataset |
+| 0.628 | the same, 9 geometry inputs only (the "0.628 → 0.665" comparison) | same | 10,475 | same | same |
+
+### Why 0.665 isn't comparable
+
+- **A different label.** The 4-Sep dataset's `profit` is "made money under the 4-Sep exit rule", which had a midpoint target (10,044 of 50,294 exits). On the 8,223 test signals the two datasets share (same date, stock and direction), the two `profit` labels agree on only **59.7%** of them.
+- **The 4-Sep model doesn't rank v2's label.** On those shared signals it scores 0.661 against its own label but **0.476** against v2's. v2's walk-forward scores do the opposite: 0.544 on v2's label, 0.448 on the 4-Sep one.
+- **Same window, current label:** v2's walk-forward AUC over 2026-01-30 → 2026-09-04 is **0.539** (12,089 signals).
+- **Other differences:** the 4-Sep set uses today's 199 index stocks for all of history (survivorship), and its context features come from the 4-Sep code, whose ATR included the signal day's own range (a lookahead, since fixed). That lookahead barely matters here: without the two ATR inputs the 4-Sep holdout AUC is 0.663.
+
+### v2's AUC by period
+
+v2's own scores on the `profit` label: by quarter over its held-out calibration window (from 2025-11-13) and by calendar year before it. **The years before are in-sample**: v2 was fit on those signals, so they show how well it memorised them, not how well it predicts. The last column is the out-of-sample comparison: the walk-forward score of each signal (the model trained before its month). 95% CIs from a day-block bootstrap (500 resamples).
+
+| Period | Dates | Signals | Winners | v2 AUC [95% CI] | Walk-forward AUC [95% CI] (signals) |
+|---|---|---|---|---|---|
+| 2021 | 2021-01-01 → 2021-12-31 | 20,775 | 40.5% | 0.655 [0.643, 0.667] (in-sample) | 0.566 [0.549, 0.583] (11,275) |
+| 2022 | 2022-01-01 → 2022-12-31 | 21,464 | 42.0% | 0.640 [0.627, 0.652] (in-sample) | 0.536 [0.522, 0.552] (21,464) |
+| 2023 | 2023-01-01 → 2023-12-31 | 15,759 | 41.2% | 0.639 [0.626, 0.651] (in-sample) | 0.558 [0.545, 0.571] (15,759) |
+| 2024 | 2024-01-01 → 2024-12-31 | 20,245 | 43.5% | 0.639 [0.622, 0.656] (in-sample) | 0.549 [0.536, 0.562] (20,245) |
+| 2025 | 2025-01-01 → 2025-11-12 | 16,402 | 44.1% | 0.637 [0.621, 0.656] (in-sample) | 0.544 [0.529, 0.560] (16,402) |
+| 2025 Q4 | 2025-11-13 → 2025-12-31 | 1,761 | 44.9% | 0.527 [0.490, 0.560] | 0.523 [0.489, 0.561] (1,761) |
+| 2026 Q1 | 2026-01-01 → 2026-03-31 | 5,330 | 45.7% | 0.516 [0.488, 0.541] | 0.516 [0.491, 0.540] (5,330) |
+| 2026 Q2 | 2026-04-01 → 2026-06-30 | 5,249 | 41.2% | 0.544 [0.515, 0.575] | 0.546 [0.514, 0.576] (5,249) |
+| 2026 Q3 | 2026-07-01 → 2026-09-22 | 3,746 | 42.6% | 0.548 [0.526, 0.566] | 0.549 [0.530, 0.567] (3,746) |
+
+### What to quote
+
+- **Quote 0.535** (walk-forward, last 12 months), alongside v2's own held-out 0.535: v2's design, its label, data it never trained on.
+- Don't quote the in-sample years: they measure fit, not prediction.
+- Don't quote 0.665 (or 0.628 → 0.665) for v2. It's a different label, dataset and model. If it comes up, say what it was: the 4-Sep exploration's forward holdout, on a label that agrees with today's on about 60% of the same signals.
+- AUC isn't the target anyway: the model only has to rank the top 2% well. Per-trade P&L of the GO trades (docs/RESULTS.md, docs/LATE_ENTRY.md) is the number that matters.
+
 ## v2.1 (shadow variant, decides nothing)
 
 v2.1 is v2's recipe with three inputs removed: `entry_log`, `orb_range_abs`, `prev_close_vs_orb`. Same rows (110,731, 2021-01-01 → 2026-09-22), same calibration split, threshold 0.6454. Protocol: `docs/V2_1_PROTOCOL.md` (SHA-256 `3b0f6b21d00f3c38…`).
