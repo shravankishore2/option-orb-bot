@@ -1,0 +1,1 @@
+Holding times, late entries (at or after 15:00) and fill realism for v2's GO trades: late entries are 42% of trades but 8% of P&L after 0.05% cost, and both entry and exit prices are tradable. Reported in `docs/LATE_ENTRY.md`; it led to `docs/LATE_CUT_PROTOCOL.md`.

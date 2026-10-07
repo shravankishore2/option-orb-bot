@@ -11,12 +11,16 @@ as docs/RESULTS.md (data/research/walkforward.csv): every signal is re-scored wi
 exits.simulate_day on the same cached 5-minute candles under each rule, and the
 current rule must reproduce every stored pnl_% exactly before anything is compared.
 
-    ORBITAL_OFFLINE=1 python exit_grace_backtest.py           # writes docs/EXIT_GRACE.md
+    ORBITAL_OFFLINE=1 python research/exit_grace/exit_grace_backtest.py           # writes docs/EXIT_GRACE.md
 
 Rules: exit_v1 (current), exit_v2_grace5 and exit_v2_grace10 (registered in
 exits.RULES; grace10 is tracked live side by side), plus a 15-minute grace as an
 exploratory, unregistered variant.
 """
+
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))   # repo root: the shared modules live there
 
 import datetime as dt
 import os

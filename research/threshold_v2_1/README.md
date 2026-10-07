@@ -1,0 +1,1 @@
+Threshold sweep, live GO-rate drift and training/serving skew check (protocol `docs/THRESHOLD_PROTOCOL.md`): the live GO rate is explained by time of day, and a stale previous-close bug was found and fixed. Lower thresholds raise total P&L only at 0.05% cost. Reported in `docs/THRESHOLD_RESULTS.md`.

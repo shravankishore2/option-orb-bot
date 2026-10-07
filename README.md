@@ -244,6 +244,22 @@ Dhan's 5 requests/s limit is per account, so on a shared account ORBITAL runs
 at 3/s (`rate_per_sec`) and stays silent around each minute boundary
 (`quiet_seconds`), when the other service makes its once-a-minute call.
 
+## Repo layout
+
+```
+/            the live bot, dashboard and research pipeline (flat: modules import each other and the VM units call them)
+deploy/      systemd units, Caddy site, logrotate
+docs/        results, pre-registrations and protocols, model docs, figures, screenshots
+models/      orbital_model.* (v2: champion and frozen baseline), variants/v2.1.*
+templates/   static/   the dashboard
+tests/       the test suite (CI runs it on every push)
+research/    finished experiments, one folder each with a README; run from the repo root
+```
+
+Git-ignored and regenerable: `data/` (market data, research outputs, the live logs in `data/live/`),
+`models/walkforward/`, `logs/`, `config.ini`. Older superseded code is in git history (removed from the
+tree on 2026-10-07; see `CLEANUP_PLAN.md`).
+
 ## Repository map
 
 | Area | File | What it does |
@@ -263,16 +279,15 @@ at 3/s (`rate_per_sec`) and stays silent around each minute boundary
 | | `paper_trade.py` | Replays past sessions through the **live** code, cycle by cycle |
 | | `model_report.py` | The model's 28 inputs, how each is computed, gain + permutation importance → `docs/MODEL.md` |
 | | `explain_model.py` | SHAP explanation → `docs/MODEL_SHAP.md` |
-| | `late_entry_check.py` | Holding times, late entries and fill realism → `docs/LATE_ENTRY.md` |
 | | `run_pipeline.py` | Runs all of the above in order |
 | **Live** | `live_engine.py` | Decision engine (completed candles → rules → features → model) |
 | | `main.py` | The bot: 5-minute loop, Telegram, logs (`--session` for the systemd timer) |
 | | `notifier.py` | Telegram messages and the sent log |
 | | `webapp.py`, `auth.py`, `guest.py`, `charts.py`, `templates/`, `static/` | Dashboard, its login and the read-only guest view |
-| **v1 research** | `train_classifier.py`, `experiments.py`, `sweep_exits.py` | The September 2026 exploration (label choice, exit sweep) on `data/research/v1/` |
+| **v1 research** | `train_classifier.py` | The September 2026 classifier exploration on `data/research/v1/` (also imported by `model_report.py`) |
+| **Finished experiments** | `research/` | One folder per experiment (threshold sweep, exit grace, late entries, v1 exploration, v3 pointer), each with a one-line README; results in `docs/` |
 | **Tests** | `tests/` | Rules, no-lookahead, live/backtest parity, exits, stats, plumbing, signals-only guard, real-data regression |
 | **Deploy** | `deploy/`, `config.example.ini` | systemd units, Caddy site, logrotate; config template |
-| **Archive** | `archive/` | Superseded code and data, kept for reference — not maintained |
 
 ## What makes the evaluation trustworthy
 

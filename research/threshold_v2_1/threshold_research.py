@@ -3,11 +3,15 @@ threshold_research.py — docs/THRESHOLD_PROTOCOL.md (steps 4-5) and the history
 docs/V2_1_PROTOCOL.md. Research only; the champion, the frozen v2 baseline and the live bot
 are not touched.
 
-    ORBITAL_OFFLINE=1 python threshold_research.py sweep            # step 5 + v2.1 history
-    ORBITAL_OFFLINE=1 python threshold_research.py drift LIVE_DIR   # step 4 analyses 1-3
+    ORBITAL_OFFLINE=1 python research/threshold_v2_1/threshold_research.py sweep            # step 5 + v2.1 history
+    ORBITAL_OFFLINE=1 python research/threshold_v2_1/threshold_research.py drift LIVE_DIR   # step 4 analyses 1-3
 
 Writes docs/THRESHOLD_RESULTS.md (sections) and docs/figures/threshold_sweep.png.
 """
+
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))   # repo root: the shared modules live there
 
 import datetime as dt
 import sys

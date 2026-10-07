@@ -32,8 +32,9 @@ HIST_RESULTS_FILE = "data/research/v1/historical_orb_results.csv"
 # top decile from +0.040% to +0.109% per trade.
 HIST_EXTRA_FILE = "data/research/v1/historical_orb_features.csv"
 
-MODEL_OUTPUT  = "archive/models/orb_classifier.pkl"
-FEATURES_OUTPUT = "archive/models/orb_features.pkl"   # saves feature list for predict.py
+# git-ignored output (the 4-Sep exploration's model; nothing live loads it)
+MODEL_OUTPUT  = "research/v1_exploration/output/orb_classifier.pkl"
+FEATURES_OUTPUT = "research/v1_exploration/output/orb_features.pkl"
 
 # ---------------------------------------------------
 # LOAD
@@ -293,6 +294,7 @@ def train(merged, extra_features=()):
 # SAVE
 # ---------------------------------------------------
 def save_model(model, features):
+    os.makedirs(os.path.dirname(MODEL_OUTPUT), exist_ok=True)
     with open(MODEL_OUTPUT, "wb") as f:
         pickle.dump(model, f)
     with open(FEATURES_OUTPUT, "wb") as f:
@@ -343,4 +345,4 @@ if __name__ == "__main__":
     model, features = train(merged, extra_features=extra)
     save_model(model, features)
 
-    print("\n✅ Done. Run predict.py to score new signals.")
+    print("\n✅ Done.")

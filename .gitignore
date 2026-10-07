@@ -38,6 +38,16 @@ __pycache__/
 !docs/figures/*.png
 *.pdf
 
+# --- regenerable research outputs (cleanup 2026-10-07) ---------------------
+# only the live/baseline and variant models are tracked; any other pickle is an output
+*.pkl
+!models/orbital_model.pkl
+!models/variants/*.pkl
+archive/models/
+research/**/output/
+docs/*.html
+*.xlsx
+
 # --- private notes (the repo is public) --------------------------------------
 docs/INTERVIEW_PREP.md
 

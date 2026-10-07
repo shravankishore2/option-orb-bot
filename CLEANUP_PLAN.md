@@ -15,6 +15,18 @@ branch `chore/cleanup` after the owner approves.
   protocol and results doc, `docs/INTERVIEW_PREP.md`, `config.ini`, token files, and everything git-ignored
   (including `archive/data/`, `models/walkforward/`, `logs/`).
 
+## Owner decisions (2026-10-07, approved with changes)
+
+1. `docs/change_report.html`: DELETE (git history and the local PDF are enough).
+2. `shadow_backfill.py`: KEEP.
+3. Telegram bot: obsolete, but **not removed in this cleanup**. Its pieces are read by more than the bot
+   itself: the live bot's start-up (`main.py` refuses to run without a valid Telegram config unless
+   `--dry-run`) and its Dhan-token failure alert both go through `notifier.py`, and the dashboard's live view
+   reads the Telegram sent log (`sent_notifications.csv`) as a fallback. Removing it needs code changes in
+   `main.py` and `webapp.py`; that's waiting on the owner.
+4. Model files checked after the `.gitignore` change and after deploy (hashes on the VM).
+5. No restructure of the root into packages now (in TASKS.md, after the late-October protocol decision).
+
 ## Counts
 
 | Class | Files |
@@ -75,8 +87,8 @@ implied volatility). The only hits are ORBITAL's own: `Lot_size.csv` (lot sizes 
 
 | File | Why |
 |---|---|
-| `docs/change_report.html` | one-off 'ORBITAL Change Report' of 2026-09-29; nothing links to it and nothing regenerates it (a PDF copy sits git-ignored at the repo root). Recommend DELETE unless you share it somewhere |
-| `shadow_backfill.py` | one-off replay of 2026-09-23 → 10-01 into the shadow log (already run); no import or unit, but documented in CLAUDE.md as the tool for replaying a missed session. Recommend KEEP |
+| `docs/change_report.html` | → DELETE (owner, 2026-10-07): one-off 'ORBITAL Change Report' of 2026-09-29 |
+| `shadow_backfill.py` | → KEEP (owner, 2026-10-07): the tool for replaying a missed session |
 
 ## ARCHIVE
 

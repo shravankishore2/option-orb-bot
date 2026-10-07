@@ -20,8 +20,12 @@ on the cached 5-minute candles, checks it reproduces the stored pnl_%, and repor
 
 Exploratory: the same data as everything else here, so it informs, it doesn't decide.
 
-    ORBITAL_OFFLINE=1 python late_entry_check.py          # writes docs/LATE_ENTRY.md
+    ORBITAL_OFFLINE=1 python research/late_entry/late_entry_check.py          # writes docs/LATE_ENTRY.md
 """
+
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))   # repo root: the shared modules live there
 
 import datetime as dt
 import os

@@ -1,0 +1,1 @@
+The 4-Sep-2026 exploration on `data/research/v1/` (`train_classifier.py` stays at the root because `model_report.py` and the tests import it): the label choice (the midpoint-target label didn't track P&L), the exit-rule sweep and the option-payoff check. Reported in `PROJECT_GUIDE.md` §4–5.

@@ -92,9 +92,9 @@ the batch backtest.
 | `main.py` | The bot: 5-min loop, `--once`, `--dry-run`, `--snapshot`; holiday / token / restart handling |
 | `notifier.py` | Telegram (IST dates, plain text, env-var credentials) and the sent log |
 | `webapp.py` · `charts.py` · `templates/dashboard.html` | Dashboard (server-rendered SVG charts) |
-| `train_classifier.py` · `experiments.py` · `sweep_exits.py` | The 4-Sep exploration, on `data/research/v1/` |
+| `train_classifier.py` · `research/v1_exploration/` | The 4-Sep exploration, on `data/research/v1/` |
 | `tests/` | 56 tests |
-| `archive/` | Superseded code and data |
+| `research/` | Finished experiments (threshold sweep, exit grace, late entries, v1 exploration), one folder each |
 
 Docs: `docs/RESULTS.md`, `docs/MODEL.md`, `docs/PREREGISTRATION.md`,
 `docs/LIVE_EDGE_CASES.md`, `README.md`.
@@ -349,7 +349,7 @@ data — each as a new pre-registration.
 - Replace `data/ind_nifty200list.csv` after each rebalance (end Mar / Sep).
 - Dhan's most recent sessions currently lack their last three 5-min candles
   (15:15–15:25); older days are complete. Recent trades exit at the 15:10 close.
-- `archive/` holds superseded code; `data/research/v1/` the 4-Sep dataset.
+- `data/research/v1/` holds the 4-Sep dataset; superseded code was removed from the tree on 2026-10-07 (git history keeps it).
 
 ## 10. How to run it
 

@@ -1,0 +1,1 @@
+v3 candidate (protocol first, then rule, retest and feature variants): no variant beat v2 under the pre-set rule, and nothing was shadow-tracked. The code changes live entry-rule files, so it stays on branch `research/v3-candidate`, with `docs/V3_PROTOCOL.md` and `docs/V3_RESULTS.md` there. The owner's decisions are recorded in `V3_RESULTS.md`.

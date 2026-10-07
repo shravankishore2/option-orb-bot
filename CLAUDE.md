@@ -71,7 +71,7 @@ Credentials: `config.ini` (git-ignored; template `config.example.ini`). Telegram
 
 ## Repo notes
 
-- `data/history/`, `data/research/`, `models/walkforward/`, `logs/` are git-ignored and regenerable. `data/research/v1/` holds the 4-Sep dataset used only by `train_classifier.py`, `experiments.py`, `sweep_exits.py`.
-- `archive/` is superseded code/data, not maintained — don't import from it.
+- `data/history/`, `data/research/`, `models/walkforward/`, `logs/` are git-ignored and regenerable. `data/research/v1/` holds the 4-Sep dataset used only by `train_classifier.py` and `research/v1_exploration/`.
+- `research/<experiment>/` holds finished experiments (run from the repo root; a path shim imports the root modules). Nothing live imports them. `archive/data/` (git-ignored) is old data only; superseded code was removed on 2026-10-07 (`CLEANUP_PLAN.md`).
 - Deployed on the Oracle VM (`ssh oracle`, `~/orbital`) next to QuantRadar (`~/newsalert`); units and Caddy site in `deploy/`. Commit only when asked.
 - When waiting on a background process, poll its PID, not `pgrep -f <text>` — the waiting shell's own command line matches the text and the loop never ends.

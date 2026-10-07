@@ -1,0 +1,1 @@
+Trailing-stop grace period vs exit_v1. Concluded, not adopted: grace5 is identical by construction and grace10 is within noise. Reported in `docs/EXIT_GRACE.md`. The grace code was removed from `exits.py`; the script's docstring says how to re-run it.

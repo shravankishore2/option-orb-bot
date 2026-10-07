@@ -10,9 +10,13 @@ candle cache, no API calls) and scores several exit rules on the same paths,
 so the comparison is apples-to-apples.
 
 Usage:
-    python sweep_exits.py                 # all signals
-    python sweep_exits.py --before 11:00  # only signals fired before 11:00
+    python research/v1_exploration/sweep_exits.py                 # all signals
+    python research/v1_exploration/sweep_exits.py --before 11:00  # only signals fired before 11:00
 """
+
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))   # repo root: the shared modules live there
 
 import argparse
 import datetime as dt

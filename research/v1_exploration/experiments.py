@@ -10,8 +10,12 @@ SESSIONS, test on the newest 20%):
   3. Given a filtered set, which stop/target actually works?
   4. What would those underlying moves be worth as bought options?
 
-Usage:  python experiments.py [--exp 1|2|3|4]
+Usage:  python research/v1_exploration/experiments.py [--exp 1|2|3|4]
 """
+
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))   # repo root: the shared modules live there
 
 import argparse
 import datetime as dt
