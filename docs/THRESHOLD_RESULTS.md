@@ -214,3 +214,13 @@ Scores: max |offline − logged| = 0.1746 over 724 signals.
 - **Recalibration:** none needed. The models and their thresholds are trained and calibrated on history built
   from Dhan's daily bars, never from the live snapshot. **Live counts** for the shadow variants and the
   threshold comparison start on 7 Oct, the first session with corrected inputs.
+
+## Weekly live status (Fridays after the close)
+
+Written by `variant_status.py`; conditions are those of `docs/THRESHOLD_PROTOCOL.md` step 7.
+
+<!-- variant-status:start -->
+
+(first line: Friday 2026-10-09)
+
+<!-- variant-status:end -->
