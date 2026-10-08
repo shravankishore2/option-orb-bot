@@ -1,0 +1,1 @@
+Cost-aware / size-aware labels and market alignment vs v2 (walk-forward, 2021-06 → 2026-09): 0 of 24 label/rate combinations beat v2 under the pre-set rule. Closest: P&L > 0.10% with 25 inputs (higher total at every rate, CI includes zero). v2 doesn't catch big winners more than random. Reported in `docs/V3_LABEL_RESULTS.md` (branch research/v3-label).
