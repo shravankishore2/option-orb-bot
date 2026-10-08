@@ -278,7 +278,66 @@ def test_registry_ships_the_late_cut_variant_fixed_at_1500():
     vs = {v["name"]: v for v in registry.shadow_variants()}
     lc = vs[registry.LATE_CUT]
     assert lc["model"] == "champion" and lc["threshold"] is None and lc["before"] == dt.time(15, 0)
-    assert registry.LATE_CUT_START == "2026-10-08" and set(vs) == {"v2.1", "v2@0.54", registry.LATE_CUT}
+    assert registry.LATE_CUT_START == "2026-10-08" and set(vs) == {"v2.1", "v2@0.54", registry.LATE_CUT, registry.V3A}
+
+
+# --- v3a (docs/V3A_PROTOCOL.md): frozen, and isolated from everything else ----------------------
+
+def test_registry_ships_v3a_frozen_as_in_its_protocol():
+    import json
+    import registry
+    v = {x["name"]: x for x in registry.shadow_variants()}[registry.V3A]
+    meta = json.loads((registry.VARIANTS_DIR / "v3a.json").read_text())
+    assert registry.sha256(registry.VARIANTS_DIR / "v3a.pkl") == registry.V3A_SHA256
+    assert registry.V3A_SHA256 in (registry.BASE_DIR / "docs" / "V3A_PROTOCOL.md").read_text()
+    assert v["threshold"] == meta["threshold"] == pytest.approx(0.6264, abs=1e-4)
+    assert len(v["model"].features) == 25 and meta["trained_through"] == registry.baseline().trained_through
+    assert registry.V3A_START == "2026-10-09"
+
+
+class _Broken:
+    """A v3a whose scoring raises (a corrupt or incompatible model)."""
+    def __init__(self, feats, mode="raise"):
+        self.features, self.mode, self.version, self.threshold = feats, mode, "v3a", 0.6264
+        self.model = self
+
+    def predict_proba(self, X):
+        if self.mode == "raise":
+            raise RuntimeError("v3a exploded")
+        if self.mode == "nan":
+            return np.column_stack([np.zeros(len(X)), np.full(len(X), np.nan)])
+        return np.zeros((len(X) + 1, 2))                                   # wrong length
+
+
+@pytest.mark.parametrize("mode", ["raise", "nan", "short"])
+def test_a_failing_v3a_changes_nothing_else(setup, day, mode, capsys):
+    source, feats = setup
+    base = _M(0.56, feats, 0.6441, "v2")
+    others = [{"name": "v2.1", "version": "v2.1", "model": _M(0.70, feats[:-1], 0.6454, "v2.1"), "threshold": 0.6454},
+              {"name": "v2@0.54", "version": "v2@0.54", "model": None, "threshold": 0.54}]
+    v3a = {"name": "v3a", "version": "v3a", "model": _Broken(feats[:25], mode), "threshold": 0.6264}
+    kw = dict(baseline=base)
+    plain = L.LiveEngine(source, FakeModel(0.9), feats, 0.5, ["X"], {}, **kw).cycle(at(day, 10, 20, 20))
+    good = L.LiveEngine(source, FakeModel(0.9), feats, 0.5, ["X"], {}, variants=others, **kw).cycle(at(day, 10, 20, 20))
+    bad = L.LiveEngine(source, FakeModel(0.9), feats, 0.5, ["X"], {}, variants=others + [v3a], **kw).cycle(at(day, 10, 20, 20))
+    strip = lambda ds: [{k: v for k, v in d.items() if k not in ("variants", "features")} for d in ds]
+    assert strip(bad) == strip(plain) and [d["decision"] for d in bad] == ["GO"]          # champion unchanged
+    assert bad[0]["variants"] == good[0]["variants"] and "v3a" not in bad[0]["variants"]  # others unchanged
+    assert "v3a" in capsys.readouterr().out                                                 # and it was logged
+
+
+def test_a_corrupt_or_altered_v3a_file_is_skipped_and_the_others_still_load(tmp_path, monkeypatch, capsys):
+    import shutil
+    import registry
+    for f in ("v2.1.pkl", "v2.1.json", "v3a.json"):
+        shutil.copy(registry.VARIANTS_DIR / f, tmp_path / f)
+    monkeypatch.setattr(registry, "VARIANTS_DIR", tmp_path)
+    (tmp_path / "v3a.pkl").write_bytes(b"not a pickle")
+    names = [v["name"] for v in registry.shadow_variants()]
+    assert "v3a" not in names and "v2.1" in names and registry.LATE_CUT in names
+    assert "v3a not loaded" in capsys.readouterr().out
+    shutil.copy(registry.BASE_DIR / "models" / "variants" / "v2.1.pkl", tmp_path / "v3a.pkl")   # a real model, wrong hash
+    assert "v3a" not in [v["name"] for v in registry.shadow_variants()]
 
 
 # --- the previous-session snapshot: Dhan's 15:40 quote close isn't final ---------------------
@@ -311,3 +370,15 @@ def test_resnapshot_refuses_during_market_hours(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(M, "take_session_snapshot", lambda syms, day: calls.append(day) or 3)
     assert M.resnapshot(["A"], dt.datetime(2026, 10, 7, 8, 50, tzinfo=IST)) == 0 and calls == [dt.date(2026, 10, 6)]
+
+
+def test_the_session_loads_every_shadow_variant(capsys):
+    """2026-10-08: the start-up message formatted v2-late-cut's threshold (None) and the
+    exception dropped every variant for the session. Loading must return all of them."""
+    import main as M
+    import registry
+    vs = M.load_variants()
+    assert [v["name"] for v in vs] == [v["name"] for v in registry.shadow_variants()]
+    assert {v["name"] for v in vs} == {"v2.1", "v3a", "v2@0.54", registry.LATE_CUT}
+    out = capsys.readouterr().out
+    assert "not loaded" not in out and "v2-late-cut (the champion's GO, entries before 15:00)" in out and "v3a (GO >= 0.626)" in out

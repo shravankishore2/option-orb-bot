@@ -300,7 +300,7 @@
             </p>
         <ul class="footnote cond-list">
             {% for r in vs.rows if r.conditions is defined %}
-            <li><strong>{{ r.label }}</strong>: {% for i, text, state in r.conditions %}({{ i }}) {{ text }}: <span class="cond-{{ state|replace(' ', '-') }}">{{ state }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</li>
+            <li><strong>{{ r.label }}</strong>: {% for i, text, state in r.conditions %}({{ i }}) {{ text }}: <span class="cond-{{ state|replace(' ', '-') }}">{{ state }}</span>{% if not loop.last %} · {% endif %}{% endfor %}{% if r.verdict is defined %}<br>Secondary: total after 0.10% {{ "%+.2f"|format(r.total10.variant) }} vs champion {{ "%+.2f"|format(r.total10.champion) }} over the same sessions (from {{ r.start }}). Verdict: {% if r.locked %}<strong>{{ r.locked.verdict }}</strong> (locked {{ r.locked.date }}){% else %}{{ r.verdict }}{% endif %}{% endif %}</li>
             {% endfor %}
         </ul>
         {% endif %}

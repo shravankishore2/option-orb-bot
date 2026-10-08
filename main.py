@@ -281,6 +281,25 @@ def next_boundary(now):
     return base + dt.timedelta(minutes=minute) + PUBLISH_DELAY
 
 
+def load_variants():
+    """The shadow variants for this session; they decide nothing, and nothing here is fatal.
+    The start-up message is built apart from loading, so it can never drop them (a threshold
+    of None, as v2-late-cut has, once did: 2026-10-08)."""
+    try:
+        variants = registry.shadow_variants()
+    except Exception as e:                       # noqa: BLE001
+        print(f"⚠️ shadow variants not loaded: {type(e).__name__}: {e}")
+        return []
+    try:
+        print("👥 Shadow variants (logged only): " + ", ".join(
+            f"{v['name']} (GO >= {v['threshold']:.3f})" if v.get("threshold") is not None
+            else f"{v['name']} (the champion's GO, entries before {v['before'].strftime('%H:%M')})"
+            for v in variants))
+    except Exception as e:                       # noqa: BLE001 — a message, never a reason to drop them
+        print(f"👥 Shadow variants (logged only): {len(variants)} ({type(e).__name__} describing them)")
+    return variants
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true", help="one cycle, then exit")
@@ -316,13 +335,7 @@ def main():
     print(f"🧠 Champion {champ.version}: trained through {champ.trained_through or '?'}, "
           f"threshold {champ.threshold:.3f}, {len(champ.features)} features")
     print(f"🧊 Baseline {baseline.version} (frozen) scores every signal alongside it")
-    try:                                         # shadow variants decide nothing; never fatal
-        variants = registry.shadow_variants()
-        print("👥 Shadow variants (logged only): " + ", ".join(f"{v['name']} (GO >= {v['threshold']:.3f})"
-                                                           for v in variants))
-    except Exception as e:                       # noqa: BLE001
-        variants = []
-        print(f"⚠️ shadow variants not loaded: {type(e).__name__}: {e}")
+    variants = load_variants()
 
     if not a.dry_run:
         try:

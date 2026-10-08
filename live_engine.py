@@ -420,11 +420,28 @@ class LiveEngine:
                 "baseline_threshold": round(self.baseline.threshold, 4) if self.baseline is not None else None,
                 "baseline_go": bool(bsc >= self.baseline.threshold) if bsc is not None else None,
                 "features": {k: (None if pd.isna(v) else float(v)) for k, v in fv.items()},
-                "variants": {v["name"]: self._variant_decision(v, s[i], sig["time"])
-                             for v in self.variants if (s := variant_scores.get(v["name"])) is not None},
+                "variants": self._variant_decisions(i, sig, variant_scores),
             })
 
         return decisions
+
+    def _variant_decisions(self, i, sig, variant_scores):
+        """{name: decision} for one signal. Each variant is isolated: a failure (or a score
+        that isn't a finite number) is logged and that variant skipped for this signal; it
+        never reaches the champion's decision or another variant."""
+        out = {}
+        for v in self.variants:
+            s = variant_scores.get(v["name"])
+            if s is None:
+                continue
+            try:
+                score = float(s[i])
+                if not np.isfinite(score):
+                    raise ValueError(f"score {score}")
+                out[v["name"]] = self._variant_decision(v, score, sig["time"])
+            except Exception as e:              # noqa: BLE001 — shadow only
+                print(f"⚠️ shadow variant {v.get('name')} skipped for {sig.get('symbol')}: {type(e).__name__}: {e}")
+        return out
 
     def _variant_decision(self, v, score, entry_time):
         """One shadow variant's decision on one signal. threshold None = the champion's;
@@ -446,7 +463,10 @@ class LiveEngine:
                     if scores is not None:
                         out[v["name"]] = list(scores)
                 elif v.get("model") is not None:
-                    out[v["name"]] = score_frame(v["model"].model, v["model"].features, frame)
+                    s = score_frame(v["model"].model, v["model"].features, frame)
+                    if len(s) != len(frame):
+                        raise ValueError(f"{len(s)} scores for {len(frame)} signals")
+                    out[v["name"]] = s
                 elif base_scores is not None and base_scores[0] is not None:
                     out[v["name"]] = list(base_scores)
             except Exception as e:              # noqa: BLE001 — shadow only

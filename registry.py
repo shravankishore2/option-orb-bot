@@ -77,18 +77,22 @@ V2_THRESHOLD_VARIANT = 0.54          # docs/THRESHOLD_PROTOCOL.md, step 6
 LATE_CUT = "v2-late-cut"             # docs/LATE_CUT_PROTOCOL.md
 LATE_CUTOFF = dt.time(15, 0)         # fixed by that protocol; never re-tuned
 LATE_CUT_START = "2026-10-08"        # first session after the protocol commit (1f25674)
+V3A = "v3a"                          # docs/V3A_PROTOCOL.md
+V3A_START = "2026-10-09"             # first session after the protocol commit (4af13a9)
+V3A_SHA256 = "3e6724041b55a530ef1711a36f4de13a160213b8f8402e14e478e7397dffdf63"   # frozen; in the protocol
 
 
 def shadow_variants():
     """Variants scored beside the champion on every live signal; they decide nothing
-    (docs/V2_1_PROTOCOL.md, docs/THRESHOLD_PROTOCOL.md). Each is a dict:
+    (docs/V2_1_PROTOCOL.md, docs/THRESHOLD_PROTOCOL.md, docs/LATE_CUT_PROTOCOL.md,
+    docs/V3A_PROTOCOL.md). Each is a dict:
     name, version, threshold, and either its own `model` or None (= the frozen v2
     baseline's score, compared with its own threshold)."""
     out = []
-    p = VARIANTS_DIR / "v2.1.pkl"
-    if p.exists():
-        m = Model("v2.1", p, _read_json(VARIANTS_DIR / "v2.1.json"))
-        out.append({"name": "v2.1", "version": "v2.1", "model": m, "threshold": m.threshold})
+    for name, sha in (("v2.1", None), (V3A, V3A_SHA256)):
+        v = _model_variant(name, sha)
+        if v is not None:
+            out.append(v)
     out.append({"name": "v2@0.54", "version": f"{BASELINE_VERSION}@{V2_THRESHOLD_VARIANT}", "model": None,
                 "threshold": V2_THRESHOLD_VARIANT})
     # the champion's own GO decisions with entries at or after 15:00 dropped
@@ -96,6 +100,23 @@ def shadow_variants():
     out.append({"name": LATE_CUT, "version": None, "model": "champion", "threshold": None,
                 "before": LATE_CUTOFF})
     return out
+
+
+def _model_variant(name, expected_sha=None):
+    """A variant with its own model file, or None. Loading is isolated: a missing, corrupt or
+    altered file (hash differs from the one in its protocol) is logged and skipped, and never
+    stops the other variants or the session."""
+    p = VARIANTS_DIR / f"{name}.pkl"
+    if not p.exists():
+        return None
+    try:
+        if expected_sha and sha256(p) != expected_sha:
+            raise RuntimeError(f"{p.name} does not match its protocol's SHA-256")
+        m = Model(name, p, _read_json(VARIANTS_DIR / f"{name}.json"))
+        return {"name": name, "version": name, "model": m, "threshold": m.threshold}
+    except Exception as e:                  # noqa: BLE001 — shadow only
+        print(f"⚠️ shadow variant {name} not loaded: {type(e).__name__}: {e}")
+        return None
 
 
 def in_late_slice(entry_time):

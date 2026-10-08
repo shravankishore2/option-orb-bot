@@ -30,6 +30,12 @@ COST_LEVELS = (0.0, 0.05, 0.10)
 # docs/THRESHOLD_RESULTS.md (2026-10-07): 0.54 beats 0.644 on combined total, with and
 # without the best month.
 SWEEP_AGREES = {"v2@0.54": True}
+# docs/V3A_PROTOCOL.md, condition 4: history agrees (docs/V3_LABEL_RESULTS.md, walk-forward top 2%:
+# mean after 0.05% +0.134% vs v2 +0.118%, total after 0.10% +170.2 vs +145.0). Fixed in the protocol.
+HISTORY_AGREES = {registry.V3A: True}
+# variants whose protocol counts from a later session than the first variant-logged day; the
+# champion is compared over the same sessions
+VARIANT_START = {registry.V3A: registry.V3A_START}
 # docs/LATE_CUT_PROTOCOL.md: the late slice is judged on its own, not against the champion
 LATE_RULE = {"min_trades": 50, "min_days": 15, "cost": 0.05}
 DOC = Path(__file__).resolve().parent / "docs" / "THRESHOLD_RESULTS.md"
@@ -91,12 +97,17 @@ def scorecard(until=None):
                           f"{float(s['threshold'].iloc[0]) if len(s) else 0.644:.3f})"}
     for name, g in v.groupby("variant"):
         sets[name] = g.loc[g["go"].astype(str).isin(["True", "true", "1"]), ["signal_id", "date"]]
-        labels[name] = f"{name} @ {float(g['threshold'].iloc[0]):.3f}"
+        labels[name] = f"{name} @ {float(g['threshold'].iloc[0]):.3f}" + \
+            (f" (from {VARIANT_START[name]})" if name in VARIANT_START else "")
     trades = {k: x.merge(out, on="signal_id").assign(pnl=lambda d: pd.to_numeric(d["pnl_pct"], errors="coerce")).dropna(subset=["pnl"])
               for k, x in sets.items()}
     champ = trades["champion"]
     rows = []
     for k, t in trades.items():
+        vstart = VARIANT_START.get(k)
+        champ_k = champ
+        if vstart:                                       # its own window, and the champion's over it
+            t, champ_k = t[t["date"] >= vstart], champ[champ["date"] >= vstart]
         n, days = len(t), t["date"].nunique()
         mean = float(t["pnl"].mean()) if n else None
         lo, hi = _day_boot(t["date"].tolist(), t["pnl"].to_numpy()) if n else (None, None)
@@ -105,16 +116,21 @@ def scorecard(until=None):
                "mean": {c: (mean - c if mean is not None else None) for c in COST_LEVELS},
                "ci05": (lo - 0.05, hi - 0.05) if lo is not None else (None, None),
                "worst_day": float(t.groupby("date")["pnl"].sum().min()) if n else None}
-        if k != "champion" and n and len(champ):
-            d = mean - float(champ["pnl"].mean())
+        if k != "champion":
+            row["start"] = vstart or start
+            row["total10"] = {"variant": float((t["pnl"] - 0.10).sum()), "champion": float((champ_k["pnl"] - 0.10).sum())}
+        if k != "champion" and n and len(champ_k):
+            d = mean - float(champ_k["pnl"].mean())
             dlo, dhi = _day_boot(t["date"].tolist(), t["pnl"].to_numpy(),
-                                 other=(champ["date"].tolist(), champ["pnl"].to_numpy()))
+                                 other=(champ_k["date"].tolist(), champ_k["pnl"].to_numpy()))
             row.update(diff=d, diff_ci=(dlo, dhi),
                        rule={"enough": n >= RULE["min_trades"] and days >= RULE["min_days"],
                              "beats": d > 0, "ci_excludes_zero": dlo is not None and (dlo > 0 or dhi < 0),
                              "ci_above_zero": dlo is not None and dlo > 0})
         if k != "champion":
             row["conditions"] = conditions(row)
+        if k in VARIANT_START:
+            row["verdict"], row["locked"] = variant_verdict(row), locked_variant_verdict(k)
         rows.append(row)
     return {"start": start, "rows": rows, "sessions": int(s["date"].nunique()), "rule": RULE, "late": late}
 
@@ -177,6 +193,26 @@ def late_conditions(card):
             (3, "owner approval", "not yet")]
 
 
+def variant_verdict(r):
+    """Conditions 1-3 of a mean-vs-champion protocol (V3A_PROTOCOL.md); 4 and 5 are listed apart."""
+    rule = r.get("rule") or {}
+    if not rule.get("enough"):
+        return "not enough data"
+    if rule.get("beats") and rule.get("ci_above_zero"):
+        return "conditions 1-3 met (owner decides)"
+    return "not supported: " + ("ahead, but the CI of the difference includes zero" if rule.get("beats")
+                                else "not ahead of the champion")
+
+
+def locked_variant_verdict(name, h=None):
+    """The verdict on the first Friday status at which the variant's floor was met, or None."""
+    for e in (h if h is not None else history()):
+        v = (e.get("variants") or {}).get(name)
+        if v and v.get("floor"):
+            return {"date": e["date"], "verdict": v["verdict"]}
+    return None
+
+
 def locked_late_verdict(h=None):
     """The verdict on the first Friday status at which the floor was met (protocol: later
     weeks are reported but don't replace it), or None."""
@@ -198,6 +234,8 @@ def conditions(row):
            (3, "95% CI of the difference excludes zero", "met" if r.get("ci_above_zero") else "not met")]
     if row["key"] in SWEEP_AGREES:
         out.append((4, "the step-5 sweep agrees", "met" if SWEEP_AGREES[row["key"]] else "not met"))
+    if row["key"] in HISTORY_AGREES:
+        out.append((4, "history agrees (docs/V3_LABEL_RESULTS.md)", "met" if HISTORY_AGREES[row["key"]] else "not met"))
     out.append((5, "owner approval", "not yet"))
     return out
 
@@ -236,8 +274,13 @@ def status_line(card, as_of):
                 if r.get("diff") is not None else "difference — (no trades on one side)")
         met = [str(i) for i, _, s in r["conditions"] if s == "met"]
         open_ = [f"{i} {s}" for i, _, s in r["conditions"] if s != "met"]
+        extra = ""
+        if k in VARIANT_START:                           # its protocol's secondary and verdict
+            tt = r["total10"]
+            extra = (f" Secondary: total after 0.10% {tt['variant']:+.2f} vs champion {tt['champion']:+.2f}."
+                     f" Verdict: {variant_verdict(r)}.")
         parts.append(f"{r['label']}: {r['n']} trades, {r['days']} days, after 0.05% {_f(r['mean'][0.05])}; {diff}. "
-                     f"Conditions met: {', '.join(met) or 'none'}; " + "; ".join(open_) + ".")
+                     f"Conditions met: {', '.join(met) or 'none'}; " + "; ".join(open_) + "." + extra)
     if card.get("late"):
         parts.append(late_line(card["late"]))
     return " ".join(parts)
@@ -256,6 +299,10 @@ def record(as_of, card=None):
     entry = {"date": as_of, "line": status_line(card, as_of)}
     if card and card.get("late"):
         entry["late"] = {"floor": card["late"]["floor"], "verdict": card["late"]["verdict"]}
+    for r in (card or {}).get("rows", []):
+        if r["key"] in VARIANT_START:
+            entry.setdefault("variants", {})[r["key"]] = {"floor": bool((r.get("rule") or {}).get("enough")),
+                                                         "verdict": variant_verdict(r)}
     h = [e for e in history() if e.get("date") != as_of] + [entry]
     h.sort(key=lambda e: e["date"])
     p = status_file()

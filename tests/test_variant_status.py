@@ -110,3 +110,34 @@ def test_condition_3_through_the_scorecard_and_the_status_line(live):
     assert v["diff_ci"][0] > 0 and {i: s for i, _, s in v["conditions"]} == {1: "met", 2: "met", 3: "met", 5: "not yet"}
     assert "Conditions met: 1, 2, 3; 5 not yet." in V.status_line(card, "2026-10-30")
     assert registry.LATE_CUT not in {r["key"] for r in card["rows"]}             # judged by its own protocol
+
+
+def test_v3a_counts_from_its_own_start_against_the_champion_over_the_same_sessions(live):
+    trades = [("2026-10-08", "10:00:00", "PRE", 0.9, 5.0, {"v3a": True})]          # before v3a's start: excluded
+    for d in days_from("2026-10-09", 15):
+        trades += [(d, "10:00:00", f"C{i}", 0.9, 0.10, {"v3a": False}) for i in range(2)]      # champion only
+        trades += [(d, "11:00:00", f"V{i}", 0.5, 0.80 + 0.01 * i, {"v3a": True}) for i in range(4)]
+    write(live, trades)
+    card = V.scorecard()
+    v = next(r for r in card["rows"] if r["key"] == registry.V3A)
+    assert v["start"] == "2026-10-09" and v["n"] == 60 and v["days"] == 15 and "(from 2026-10-09)" in v["label"]
+    assert v["diff"] == pytest.approx(0.815 - 0.10, abs=1e-6)                       # champion's 10-08 trade excluded
+    assert {i: s for i, _, s in v["conditions"]} == {1: "met", 2: "met", 3: "met", 4: "met", 5: "not yet"}
+    assert v["total10"]["variant"] == pytest.approx(60 * 0.715, abs=1e-6)
+    assert v["total10"]["champion"] == pytest.approx(30 * 0.0, abs=1e-6)
+    assert v["verdict"] == "conditions 1-3 met (owner decides)" and v["locked"] is None
+    line = V.status_line(card, "2026-10-30")
+    assert "v3a @ 0.644 (from 2026-10-09): 60 trades, 15 days" in line and "Secondary: total after 0.10% +42.90 vs champion +0.00" in line
+    V.record("2026-10-30")
+    assert V.locked_variant_verdict(registry.V3A) == {"date": "2026-10-30", "verdict": "conditions 1-3 met (owner decides)"}
+    assert next(r for r in V.scorecard()["rows"] if r["key"] == registry.V3A)["locked"]["date"] == "2026-10-30"
+
+
+def test_the_scorecard_page_shows_v3a_under_its_protocol(live, monkeypatch):
+    import webapp
+    monkeypatch.setattr(webapp, "PASSWORD", None, raising=False)
+    monkeypatch.setattr(webapp, "CHECKER", None, raising=False)
+    write(live, [(d, "11:00:00", "V", 0.5, 0.3, {"v3a": True}) for d in days_from("2026-10-09", 2)])
+    html = webapp.app.test_client().get("/scorecard").get_data(as_text=True)
+    assert "v3a @ 0.644 (from 2026-10-09)" in html and "history agrees" in html
+    assert "Secondary: total after 0.10%" in html and "Verdict: not enough data" in html
