@@ -141,3 +141,22 @@ def test_the_scorecard_page_shows_v3a_under_its_protocol(live, monkeypatch):
     html = webapp.app.test_client().get("/scorecard").get_data(as_text=True)
     assert "v3a @ 0.644 (from 2026-10-09)" in html and "history agrees" in html
     assert "Secondary: total after 0.10%" in html and "Verdict: not enough data" in html
+
+
+def test_the_champion_is_compared_only_on_sessions_the_variant_logged(live):
+    """2026-10-08: no variant rows were logged; the champion's trades that day must not enter
+    any variant's comparison (the protocols compare over the same live sessions)."""
+    d1, d2, d3 = days_from("2026-10-07", 3)                       # 7, 8, 9 Oct
+    trades = [(d1, "10:00:00", "A", 0.9, 0.5, {"v2.1": True}), (d3, "10:00:00", "C", 0.9, 0.5, {"v2.1": True})]
+    write(live, trades)
+    # the 8 Oct session: a champion GO with a big loss, and no variant rows at all
+    s = pd.read_csv(live / "shadow_signals.csv"); o = pd.read_csv(live / "shadow_outcomes.csv")
+    row = s.iloc[0].copy(); row["signal_id"], row["date"], row["symbol"] = f"{d2}|B|BUY", d2, "B"
+    orow = o.iloc[0].copy(); orow["signal_id"], orow["date"], orow["pnl_pct"] = f"{d2}|B|BUY", d2, -3.0
+    pd.concat([s, row.to_frame().T]).to_csv(live / "shadow_signals.csv", index=False)
+    pd.concat([o, orow.to_frame().T]).to_csv(live / "shadow_outcomes.csv", index=False)
+    card = V.scorecard()
+    champ = next(r for r in card["rows"] if r["key"] == "champion")
+    v21 = next(r for r in card["rows"] if r["key"] == "v2.1")
+    assert champ["n"] == 3                                       # the champion's own row: every session
+    assert v21["diff"] == pytest.approx(0.0)                     # vs the champion on 7 and 9 Oct only

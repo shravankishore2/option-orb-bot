@@ -179,9 +179,7 @@
             </div>
         </div>
 
-        {% if not t %}
-        <div class="empty-state large">No completed signals yet. The scorecard fills in as today's signals exit.</div>
-        {% else %}
+        {# formatting helpers, defined unconditionally: the variant and late-slice sections use them too #}
         {% macro hit(side) -%}
             {% if side.n %}{{ "%.0f"|format(side.hit_rate) }}%{% else %}—{% endif %}
         {%- endmacro %}
@@ -191,6 +189,9 @@
         {% macro n(side) -%}
             {{ side.n }}{% if side.too_few %} <em class="few" title="fewer than {{ sc.min_sample }} signals — too few to read">too few</em>{% endif %}
         {%- endmacro %}
+        {% if not t %}
+        <div class="empty-state large">No completed signals yet. The scorecard fills in as today's signals exit.</div>
+        {% else %}
 
         <h3 class="sub">Cumulative · {{ sc.card.first }} → {{ sc.card.last }}</h3>
         <section class="stats-row">
@@ -272,6 +273,12 @@
 
         {% set vs = sc.variants %}
         <h3 class="sub">Champion vs shadow variants (live, paper)</h3>
+        {% set ig = sc.integrity %}
+        <p class="footnote integrity-line">Last session's logging check:
+            {% if not ig %}not run yet (runs after each session, 15:55).
+            {% elif ig.ok and ig.signals %}<span class="cond-met">OK</span> ({{ ig.date }}): {{ ig.signals }} live signals; every variant logged {{ ig.signals }} rows.
+            {% elif ig.ok %}{{ ig.date }}: no live signals logged.
+            {% else %}<span class="cond-not-met">PROBLEM</span> ({{ ig.date }}): {{ ig.problems|join("; ") }}.{% endif %}</p>
         {% if not vs or not vs.rows %}
         <p class="footnote">v2.1 and v2 @ 0.54 are scored beside the champion on every live signal from their first
             session; nothing has been logged yet. They decide nothing (docs/V2_1_PROTOCOL.md, docs/THRESHOLD_PROTOCOL.md).</p>

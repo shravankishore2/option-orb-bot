@@ -1,0 +1,11 @@
+# /etc/systemd/system/orbital-integrity.timer — Mon-Fri 15:55 IST, after the bot's ~15:40 exit
+# (the check also waits while orbital.service is still active). A holiday has no signals: no alert.
+[Unit]
+Description=ORBITAL post-session integrity check, trading days
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 15:55:00 Asia/Kolkata
+Unit=orbital-integrity.service
+
+[Install]
+WantedBy=timers.target

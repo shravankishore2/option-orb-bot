@@ -1,0 +1,19 @@
+# /etc/systemd/system/orbital-integrity.service — after each session: every shadow variant must
+# have logged one row per live signal, and every expected variant must load. Problems go to
+# Telegram (notifier.py) and the journal; the result to data/live/integrity.json (Scorecard).
+[Unit]
+Description=ORBITAL post-session shadow-variant integrity check
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/orbital
+Environment=PYTHONUNBUFFERED=1 TZ=Asia/Kolkata OMP_NUM_THREADS=1
+ExecStart=/home/ubuntu/orbital/.venv/bin/python -u integrity.py
+MemoryHigh=350M
+MemoryMax=450M
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+SyslogIdentifier=orbital-integrity

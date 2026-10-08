@@ -33,6 +33,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
 import charts
+import integrity
 import registry
 import shadow
 import strategy_config as C
@@ -752,7 +753,7 @@ def scorecard_view(by):
             "drift": read_json(str(shadow.LIVE_DIR / "drift.json")),
             "skips": skip_report(df, signals),
             "variants": variant_status.scorecard(), "variant_status": variant_status.history()[-4:][::-1],
-            "late_locked": variant_status.locked_late_verdict()}
+            "late_locked": variant_status.locked_late_verdict(), "integrity": integrity.last()}
 
 
 @app.route("/scorecard")

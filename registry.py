@@ -80,6 +80,11 @@ LATE_CUT_START = "2026-10-08"        # first session after the protocol commit (
 V3A = "v3a"                          # docs/V3A_PROTOCOL.md
 V3A_START = "2026-10-09"             # first session after the protocol commit (4af13a9)
 V3A_SHA256 = "3e6724041b55a530ef1711a36f4de13a160213b8f8402e14e478e7397dffdf63"   # frozen; in the protocol
+# every variant a session is expected to log (integrity.py checks the rows against this list;
+# a variant that fails to load is skipped by shadow_variants() but still expected here)
+EXPECTED_VARIANTS = ("v2.1", "v3a", "v2@0.54", "v2-late-cut")
+VARIANTS_EXPECTED_FROM = {"v2.1": "2026-10-07", "v2@0.54": "2026-10-07",      # first live session of each
+                          "v2-late-cut": "2026-10-08", "v3a": "2026-10-09"}
 
 
 def shadow_variants():

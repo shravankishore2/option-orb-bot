@@ -95,7 +95,9 @@ def scorecard(until=None):
     sets = {"champion": s.loc[s["model_go"].astype(str).isin(["True", "true", "1"]), ["signal_id", "date"]]}
     labels = {"champion": f"Champion ({s['model_version'].iloc[0] if len(s) else 'v2'} @ "
                           f"{float(s['threshold'].iloc[0]) if len(s) else 0.644:.3f})"}
+    logged_days = {}                                     # sessions on which each variant logged rows
     for name, g in v.groupby("variant"):
+        logged_days[name] = set(g["date"])
         sets[name] = g.loc[g["go"].astype(str).isin(["True", "true", "1"]), ["signal_id", "date"]]
         labels[name] = f"{name} @ {float(g['threshold'].iloc[0]):.3f}" + \
             (f" (from {VARIANT_START[name]})" if name in VARIANT_START else "")
@@ -106,8 +108,10 @@ def scorecard(until=None):
     for k, t in trades.items():
         vstart = VARIANT_START.get(k)
         champ_k = champ
+        if k != "champion":                              # "over the same live sessions": only days this
+            champ_k = champ[champ["date"].isin(logged_days.get(k, set()))]   # variant logged (8 Oct: none)
         if vstart:                                       # its own window, and the champion's over it
-            t, champ_k = t[t["date"] >= vstart], champ[champ["date"] >= vstart]
+            t, champ_k = t[t["date"] >= vstart], champ_k[champ_k["date"] >= vstart]
         n, days = len(t), t["date"].nunique()
         mean = float(t["pnl"].mean()) if n else None
         lo, hi = _day_boot(t["date"].tolist(), t["pnl"].to_numpy()) if n else (None, None)
