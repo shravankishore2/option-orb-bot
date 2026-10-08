@@ -56,6 +56,14 @@ def _split(train):
 
 
 def _model(kind, fit, feats):
+    """A scoring function for one candidate (see _estimator)."""
+    est = _estimator(kind, fit, feats)
+    return (lambda Z: est.predict(Z)) if kind == "b" else (lambda Z: est.predict_proba(Z)[:, 1])
+
+
+def _estimator(kind, fit, feats):
+    """The fitted XGBoost model of one candidate: (a) classifier on P&L > 0.10%, (b) regressor on
+    P&L, (c) profit classifier weighted by |P&L|. models/variants/v3a.pkl is _estimator("a", …)."""
     from xgboost import XGBClassifier, XGBRegressor
     params = dict(C.MODEL_PARAMS)
     X = fit[feats].fillna(0)
@@ -63,7 +71,7 @@ def _model(kind, fit, feats):
         params.pop("eval_metric", None)
         m = XGBRegressor(**params, objective="reg:squarederror", eval_metric="rmse")
         m.fit(X, fit["pnl_%"])
-        return lambda Z: m.predict(Z)
+        return m
     if kind == "a":
         y = (fit["pnl_%"] > 0.10).astype(int)
         w = None
@@ -74,7 +82,7 @@ def _model(kind, fit, feats):
         params["scale_pos_weight"] = w[y.to_numpy() == 0].sum() / max(w[y.to_numpy() == 1].sum(), 1e-9)
     m = XGBClassifier(**params)
     m.fit(X, y, sample_weight=w)
-    return lambda Z: m.predict_proba(Z)[:, 1]
+    return m
 
 
 def score():

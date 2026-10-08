@@ -70,7 +70,19 @@ live counts restart from zero.
 
 ## Frozen model
 
-(appended after training, before any tracking code)
+Appended after training (2026-10-08), before any tracking code. Trained by
+`research/v3_label/train_v3a.py` with the research recipe itself
+(`v3_label_research._split`, `_estimator("a", …)`); the research outputs re-run identically
+after the estimator was exposed for saving.
+
+| | |
+|---|---|
+| Rows | 110,731 (2021-01-01 → 2026-09-22); fit 94,645, calibration 16,086 from 2025-11-13 |
+| Positives in the fit rows (P&L > 0.10%) | 36,056 |
+| **Threshold (frozen)** | **0.6264** (exactly 0.6264342665672302); 2.00% of calibration scores are at or above it |
+| `models/variants/v3a.pkl` SHA-256 | `3e6724041b55a530ef1711a36f4de13a160213b8f8402e14e478e7397dffdf63` |
+| `models/variants/v3a.json` SHA-256 | `5988fd770f4c8ecf9b3b567654db641482236218d13483171748ff335009fd73` |
+| This protocol as committed (4af13a9), SHA-256, recorded in the JSON | `6420f68def2fe42eeceba9c58022ee8e4b044a8c677bea40f90ab6606067bac9` |
 
 ## Deviations
 
